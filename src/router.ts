@@ -27,6 +27,7 @@ import {
   getMessagingGroupWithAgentCount,
 } from './db/messaging-groups.js';
 import { findSessionForAgent } from './db/sessions.js';
+import { runInboundMessageGates } from './module-hooks.js';
 import { startTypingRefresh, stopTypingRefresh } from './modules/typing/index.js';
 import { log } from './log.js';
 import { resolveSession, writeSessionMessage, writeOutboundDirect } from './session-manager.js';
@@ -445,6 +446,12 @@ async function deliverToAgent(
       log.info('Admin command denied by gate', { command: gate.command, userId, agentGroupId: agent.agent_group_id });
       return;
     }
+  }
+
+  // Module gates (e.g. content filters) — a refusal drops the message before it
+  // is written, so the container never sees it and never wakes for it.
+  if (!(await runInboundMessageGates({ event, userId, mg, agentGroup, session, deliveryAddr }))) {
+    return;
   }
 
   writeSessionMessage(session.agent_group_id, session.id, {

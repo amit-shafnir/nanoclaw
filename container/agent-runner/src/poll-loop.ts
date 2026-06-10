@@ -13,6 +13,7 @@ import {
   stripInternalTags,
   type RoutingContext,
 } from './formatter.js';
+import { runInboundBatchHooks, runResultTextHooks } from './hooks.js';
 import { isUploadTraceCommand, uploadTrace } from './upload-trace.js';
 import type { AgentProvider, AgentQuery, ProviderEvent } from './providers/types.js';
 
@@ -196,9 +197,21 @@ export async function runPollLoop(config: PollLoopConfig): Promise<void> {
     // falls back to `normalMessages`, and no gating happens.
     let keep: MessageInRow[] = normalMessages;
     let skipped: string[] = [];
+
+    // Module hooks (e.g. content filters) run BEFORE the pre-task scripts —
+    // scripts are arbitrary code, and a message a hook blocks must never get
+    // to run one. The ordering is structural: scripts only ever see the
+    // hooks' `keep` output.
+    const hooked = await runInboundBatchHooks(keep, routing, 'initial');
+    if (hooked.blockedIds.length > 0) {
+      markCompleted(hooked.blockedIds);
+      log(`Module hooks blocked ${hooked.blockedIds.length} inbound message(s)`);
+    }
+    keep = hooked.keep;
+
     // MODULE-HOOK:scheduling-pre-task:start
     const { applyPreTaskScripts } = await import('./scheduling/task-script.js');
-    const preTask = await applyPreTaskScripts(normalMessages);
+    const preTask = await applyPreTaskScripts(keep);
     keep = preTask.keep;
     skipped = preTask.skipped;
     if (skipped.length > 0) {
@@ -371,9 +384,19 @@ async function processQuery(
         // Mirrors the initial-batch hook above.
         let keep = newMessages;
         let skipped: string[] = [];
+
+        // Module hooks run before the pre-task scripts — mirrors the
+        // initial-batch ordering (a blocked message never runs a script).
+        const hooked = await runInboundBatchHooks(keep, routing, 'followup');
+        if (hooked.blockedIds.length > 0) {
+          markCompleted(hooked.blockedIds);
+          log(`Module hooks blocked ${hooked.blockedIds.length} follow-up message(s)`);
+        }
+        keep = hooked.keep;
+
         // MODULE-HOOK:scheduling-pre-task-followup:start
         const { applyPreTaskScripts } = await import('./scheduling/task-script.js');
-        const preTask = await applyPreTaskScripts(newMessages);
+        const preTask = await applyPreTaskScripts(keep);
         keep = preTask.keep;
         skipped = preTask.skipped;
         if (skipped.length > 0) {
@@ -455,7 +478,11 @@ async function processQuery(
         // at all — either way the turn is finished.
         markCompleted(initialBatchIds);
         if (event.text) {
-          const { hasUnwrapped } = dispatchResultText(event.text, routing);
+          // Module hooks (e.g. content filters) see the result text before any
+          // <message> block is dispatched; null suppresses dispatch.
+          const text = await runResultTextHooks(event.text, routing);
+          if (text === null) continue;
+          const { hasUnwrapped } = dispatchResultText(text, routing);
           if (hasUnwrapped && !unwrappedNudged) {
             unwrappedNudged = true;
             const destinations = getAllDestinations();

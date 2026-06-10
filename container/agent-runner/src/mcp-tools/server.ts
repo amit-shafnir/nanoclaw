@@ -11,6 +11,7 @@
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
+import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 
 import type { McpToolDefinition } from './types.js';
 
@@ -32,6 +33,38 @@ export function registerTools(tools: McpToolDefinition[]): void {
   }
 }
 
+/**
+ * Tool-call middleware. Modules register wrappers around every tool
+ * dispatch — one seam covers all registered tools, present and future, so a
+ * cross-cutting concern (e.g. an output content filter) never edits a tool module.
+ * Registration order = chain order (first registered runs outermost). A
+ * middleware that doesn't call `next` decides the call's result itself.
+ */
+export type ToolMiddleware = (
+  name: string,
+  args: Record<string, unknown>,
+  next: () => Promise<CallToolResult>,
+) => Promise<CallToolResult>;
+
+const middlewares: ToolMiddleware[] = [];
+
+export function registerToolMiddleware(mw: ToolMiddleware): void {
+  middlewares.push(mw);
+}
+
+/** Dispatch one tool call through the middleware chain to its handler. */
+export async function dispatchToolCall(name: string, args: Record<string, unknown>): Promise<CallToolResult> {
+  const tool = toolMap.get(name);
+  if (!tool) {
+    return { content: [{ type: 'text', text: `Unknown tool: ${name}` }] };
+  }
+  const invoke = middlewares.reduceRight<() => Promise<CallToolResult>>(
+    (next, mw) => () => mw(name, args, next),
+    () => tool.handler(args),
+  );
+  return invoke();
+}
+
 export async function startMcpServer(): Promise<void> {
   const server = new Server({ name: 'nanoclaw', version: '2.0.0' }, { capabilities: { tools: {} } });
 
@@ -41,11 +74,7 @@ export async function startMcpServer(): Promise<void> {
 
   server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const { name, arguments: args } = request.params;
-    const tool = toolMap.get(name);
-    if (!tool) {
-      return { content: [{ type: 'text', text: `Unknown tool: ${name}` }] };
-    }
-    return tool.handler(args ?? {});
+    return dispatchToolCall(name, args ?? {});
   });
 
   const transport = new StdioServerTransport();

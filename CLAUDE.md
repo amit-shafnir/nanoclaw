@@ -66,6 +66,7 @@ For ad-hoc queries from skills or scripts, use the in-tree wrapper rather than t
 | `src/session-manager.ts` | Resolves sessions; opens `inbound.db` / `outbound.db`; manages heartbeat path |
 | `src/container-runner.ts` | Spawns per-agent-group Docker containers with session DB + outbox mounts, OneCLI `ensureAgent` |
 | `src/container-runtime.ts` | Runtime selection (Docker vs Apple containers), orphan cleanup |
+| `src/module-hooks.ts` | Generic host hook registries for optional modules — inbound message gates (router), outbound message gates (delivery), mount contributors (container spawn); empty = no-op. Container counterparts: `container/agent-runner/src/hooks.ts` (poll-loop batch + result-text hooks), `mcp-tools/server.ts` (tool middleware), `modules.ts` (registration barrel imported by both container entry points) |
 | `src/modules/permissions/access.ts` | `canAccessAgentGroup` — owner / global admin / scoped admin / member resolution against `user_roles` + `agent_group_members` |
 | `src/modules/approvals/primitive.ts` | `pickApprover`, `pickApprovalDelivery`, `requestApproval`, approval-handler registry |
 | `src/command-gate.ts` | Router-side admin command gate — queries `user_roles` directly (no env var, no container-side check) |

@@ -10,6 +10,8 @@ import './scheduling.js';
 import './interactive.js';
 import './agents.js';
 import './self-mod.js';
+// Modules barrel — optional modules self-register tool middleware on import.
+import '../modules.js';
 import { startMcpServer } from './server.js';
 
 function log(msg: string): void {

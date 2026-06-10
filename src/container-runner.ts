@@ -28,6 +28,7 @@ import { composeGroupClaudeMd } from './claude-md-compose.js';
 import { getAgentGroup } from './db/agent-groups.js';
 import { getDb, hasTable } from './db/connection.js';
 import { initGroupFilesystem } from './group-init.js';
+import { runMountContributors } from './module-hooks.js';
 import { stopTypingRefresh } from './modules/typing/index.js';
 import { log } from './log.js';
 import { validateAdditionalMounts } from './modules/mount-security/index.js';
@@ -331,6 +332,9 @@ function buildMounts(
   if (providerContribution.mounts) {
     mounts.push(...providerContribution.mounts);
   }
+
+  // Module-contributed mounts (e.g. a module's RO config dir)
+  mounts.push(...runMountContributors({ agentGroup, session, groupDir }));
 
   return mounts;
 }

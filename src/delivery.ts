@@ -19,8 +19,10 @@ import {
   markDelivered,
   markDeliveryFailed,
   migrateDeliveredTable,
+  type OutboundMessage,
 } from './db/session-db.js';
 import { log } from './log.js';
+import { runOutboundMessageGates } from './module-hooks.js';
 import { normalizeOptions } from './channels/ask-question.js';
 import { clearOutbox, openInboundDb, openOutboundDb, readOutboxFiles } from './session-manager.js';
 import { pauseTypingRefreshAfterDelivery, setTypingAdapter } from './modules/typing/index.js';
@@ -232,15 +234,7 @@ async function drainSession(session: Session): Promise<void> {
 }
 
 async function deliverMessage(
-  msg: {
-    id: string;
-    kind: string;
-    platform_id: string | null;
-    channel_type: string | null;
-    thread_id: string | null;
-    content: string;
-    in_reply_to: string | null;
-  },
+  msg: OutboundMessage,
   session: Session,
   inDb: Database.Database,
 ): Promise<string | undefined> {
@@ -254,6 +248,14 @@ async function deliverMessage(
   // System actions — handle internally (schedule_task, cancel_task, etc.)
   if (msg.kind === 'system') {
     await handleSystemAction(content, session, inDb);
+    return;
+  }
+
+  // Module gates (e.g. content filters) — a refusal resolves normally so the
+  // caller marks the row delivered without sending (no retry loop). A gate
+  // that wants the user told delivers its own alert through the adapter
+  // directly, never via outbound.db, so it cannot recurse through here.
+  if (!(await runOutboundMessageGates({ msg, session }))) {
     return;
   }
 
