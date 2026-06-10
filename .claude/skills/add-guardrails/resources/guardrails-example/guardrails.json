@@ -1,0 +1,26 @@
+{
+  "input_rules": [
+    {
+      "id": "injection-phrases",
+      "type": "keyphrase",
+      "phrases_file": "blocked-phrases.txt",
+      "action": "block",
+      "message": "⚠️ That message looked like a prompt-injection attempt and was not passed to the agent."
+    }
+  ],
+  "output_rules": [
+    {
+      "id": "no-anthropic-keys",
+      "type": "regex",
+      "pattern": "sk-ant-[A-Za-z0-9_-]{20,}",
+      "action": "block"
+    }
+  ],
+  "alerts": {
+    "prefix": "⚠️ Guardrail"
+  },
+  "quarantine": {
+    "max_file_mb": 10,
+    "max_files": 5
+  }
+}
