@@ -21,6 +21,7 @@ import {
   resolveSession,
   writeSessionMessage,
   writeSessionRouting,
+  writeOutboundDirect,
   initSessionFolder,
   sessionDir,
   inboundDbPath,
@@ -1028,5 +1029,47 @@ describe('delivery', () => {
 
     expect(undelivered).toHaveLength(1);
     expect(JSON.parse(undelivered[0].content).text).toBe('Agent response');
+  });
+
+  it('writeOutboundDirect writes a deliverable row with even seq (regression: RO open threw)', () => {
+    createAgentGroup({
+      id: 'ag-1',
+      name: 'Agent',
+      folder: 'agent',
+      agent_provider: null,
+      created_at: now(),
+    });
+    createMessagingGroup({
+      id: 'mg-test',
+      channel_type: 'discord',
+      platform_id: 'chan-test',
+      name: 'Test',
+      is_group: 0,
+      unknown_sender_policy: 'strict',
+      created_at: now(),
+    });
+    const { session } = resolveSession('ag-1', 'mg-test', null, 'shared');
+
+    writeOutboundDirect('ag-1', session.id, {
+      id: 'deny-1',
+      kind: 'chat',
+      platformId: 'chan-test',
+      channelType: 'discord',
+      threadId: null,
+      content: JSON.stringify({ text: 'Permission denied.' }),
+    });
+
+    const db = new Database(outboundDbPath('ag-1', session.id));
+    const rows = db.prepare('SELECT id, seq, content FROM messages_out').all() as Array<{
+      id: string;
+      seq: number;
+      content: string;
+    }>;
+    db.close();
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0].id).toBe('deny-1');
+    expect(rows[0].seq % 2).toBe(0); // host writes keep even seq parity
+    expect(JSON.parse(rows[0].content).text).toBe('Permission denied.');
   });
 });
