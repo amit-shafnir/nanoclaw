@@ -1,8 +1,9 @@
 /**
  * Container-side input guardrails.
  *
- * Invoked from the poll-loop MODULE-HOOKs (initial batch + follow-up poll)
- * BEFORE messages are formatted into the prompt — a blocked message never
+ * Invoked from the poll loop's inbound batch hook (registered by
+ * ./register.ts; initial batch + follow-up poll) BEFORE messages are
+ * formatted into the prompt — a blocked message never
  * becomes part of any prompt, so the agent cannot see it. The poll loop is
  * the only path messages take to the model, which is what makes this
  * ordering structural rather than timing-based.

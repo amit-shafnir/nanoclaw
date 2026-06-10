@@ -1,15 +1,15 @@
 /**
  * Container-side output guardrails.
  *
- * Call sites cover every agent-authored output path:
- *   1. poll-loop.ts result branch (applyOutputGuardrails) — the agent's
- *      <message to="...">…</message> result text, checked before
+ * Call sites cover every agent-authored output path (wired by ./register.ts):
+ *   1. The poll loop's result-text hook (applyOutputGuardrails) — the
+ *      agent's <message to="...">…</message> result text, checked before
  *      dispatchResultText writes anything to messages_out.
- *   2. mcp-tools/core.ts send_message / send_file (caption + filename) /
- *      edit_message and mcp-tools/interactive.ts ask_user_question / send_card
- *      (checkOutputTexts) — checked before writeMessageOut; on block the
- *      agent receives a tool error so it understands instead of failing
- *      silently.
+ *   2. The tool middleware (./tool-middleware.ts → checkOutputTexts) —
+ *      send_message / send_file (caption + filename) / edit_message /
+ *      ask_user_question / send_card, checked before the tool handler runs;
+ *      on block the agent receives a tool error so it understands instead
+ *      of failing silently.
  *
  * Only the sendable content is scanned (message-block bodies / tool text),
  * never <internal> scratchpad — scratchpad is not delivered, so blocking on

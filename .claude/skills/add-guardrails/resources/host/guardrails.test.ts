@@ -12,7 +12,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { loadGuardrailsConfig, type GuardrailsLoadResult } from './config.js';
 import { checkOutboundDelivery } from './delivery-check.js';
-import { applyInboundGuardrails, type InboundGuardrailContext } from './index.js';
+import { applyInboundGuardrails, type InboundGuardrailContext } from './inbound.js';
 import { appendQuarantine, quarantineFilePath } from './quarantine.js';
 import {
   collectStringLeaves,

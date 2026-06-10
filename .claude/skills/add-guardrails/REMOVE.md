@@ -1,44 +1,19 @@
 # Removing add-guardrails
 
-Reverse of apply: remove the marked edits first (they import the module
-files), then delete the files. Safe to re-run if some pieces are already gone.
+Reverse of apply: remove the two barrel-import lines, then delete the module
+directories. No core files were edited by the install, so there is nothing
+else to revert. Safe to re-run if some pieces are already gone.
 
-## 1. Remove the marked edits by hand
+## 1. Remove the barrel lines
 
-- `src/router.ts` — the guardrails block in `deliverToAgent()` (the
-  `// Guardrails (optional…)` comment, the
-  `await import('./modules/guardrails/index.js')` line, and the
-  `if (applyInboundGuardrails(...)) { return; }` statement).
-- `src/delivery.ts` — the host output-checkpoint block in `deliverMessage()`
-  (the `// Host-side output guardrails…` comment, the
-  `await import('./modules/guardrails/delivery-check.js')` line, and the
-  `if (guard.action === 'block') { … return; }` statement).
-- `container/agent-runner/src/poll-loop.ts` — the three marker blocks:
-  `MODULE-HOOK:guardrails-input`, `MODULE-HOOK:guardrails-input-followup`,
-  and `MODULE-HOOK:guardrails-output`. If the scheduling pre-task blocks are
-  populated, point their calls back at the raw batch:
-  `applyPreTaskScripts(normalMessages)` (initial) and
-  `applyPreTaskScripts(newMessages)` (follow-up) instead of
-  `applyPreTaskScripts(keep)`.
-- `container/agent-runner/src/mcp-tools/core.ts` — the three marker blocks:
-  `MODULE-HOOK:guardrails-output-mcp` (send_message),
-  `MODULE-HOOK:guardrails-output-mcp-file` (send_file), and
-  `MODULE-HOOK:guardrails-output-mcp-edit` (edit_message); plus the
-  `// No guardrails hook here…` comment in add_reaction.
-- `container/agent-runner/src/mcp-tools/interactive.ts` — the two marker
-  blocks: `MODULE-HOOK:guardrails-output-mcp-question` (ask_user_question)
-  and `MODULE-HOOK:guardrails-output-mcp-card` (send_card).
-- `src/container-runner.ts` — the `guardrails/` nested-RO mount block in
-  `buildMounts()`.
-- `src/index.ts` — the quarantine-sink block in `main()` (the dynamic import
-  of `./modules/guardrails/quarantine.js` and the
-  `registerGuardrailsDeliveryAction()` call).
+- `src/modules/index.ts` — delete the `import './guardrails/index.js';` line.
+- `container/agent-runner/src/modules.ts` — delete the
+  `import './guardrails/register.js';` line.
 
-## 2. Delete the module files and tests
+## 2. Delete the module directories
 
 ```bash
 rm -rf src/modules/guardrails container/agent-runner/src/guardrails
-rm -f src/guardrails-wiring.test.ts
 ```
 
 ## 3. Optional cleanup
