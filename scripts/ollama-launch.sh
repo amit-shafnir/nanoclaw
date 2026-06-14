@@ -9,7 +9,7 @@
 #
 # Usage:
 #   bash scripts/ollama-launch.sh --model <id> --base-url <url> \
-#       [--display-name <name>] [--group <agent-group-id>]
+#       [--display-name <name>] [--agent-name <name>] [--group <agent-group-id>]
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"

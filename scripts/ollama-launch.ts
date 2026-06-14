@@ -31,7 +31,7 @@
  * Usage:
  *   pnpm exec tsx scripts/ollama-launch.ts \
  *     --model <id> --base-url <url> [--display-name <name>] \
- *     [--group <agent-group-id>]
+ *     [--agent-name <name>] [--group <agent-group-id>]
  */
 import { execSync, spawnSync } from 'node:child_process';
 import path from 'node:path';
@@ -64,7 +64,10 @@ const CONTAINER_HOST_GATEWAY = 'host.docker.internal';
 export interface LaunchArgs {
   model: string;
   baseUrl: string;
+  /** The human operator's name (the cli:local user); first run only. */
   displayName?: string;
+  /** The assistant's own name; defaults to displayName in the cli-agent step when omitted. */
+  agentName?: string;
   group?: string;
 }
 
@@ -79,6 +82,7 @@ export function parseArgs(argv: string[]): ParseResult {
   let model: string | undefined;
   let baseUrl: string | undefined;
   let displayName: string | undefined;
+  let agentName: string | undefined;
   let group: string | undefined;
 
   const takeValue = (flag: string, raw: string | undefined): string | { error: string } =>
@@ -91,12 +95,14 @@ export function parseArgs(argv: string[]): ParseResult {
       case '--model':
       case '--base-url':
       case '--display-name':
+      case '--agent-name':
       case '--group': {
         const val = takeValue(flag, next);
         if (typeof val !== 'string') return { ok: false, message: val.error };
         if (flag === '--model') model = val;
         else if (flag === '--base-url') baseUrl = val;
         else if (flag === '--display-name') displayName = val;
+        else if (flag === '--agent-name') agentName = val;
         else group = val;
         i++;
         break;
@@ -109,7 +115,7 @@ export function parseArgs(argv: string[]): ParseResult {
   if (!model) return { ok: false, message: 'missing required argument: --model' };
   if (!baseUrl) return { ok: false, message: 'missing required argument: --base-url' };
 
-  return { ok: true, value: { model, baseUrl, displayName, group } };
+  return { ok: true, value: { model, baseUrl, displayName, agentName, group } };
 }
 
 export type PreflightResult = { ok: true } | { ok: false; exitCode: 3; message: string };
@@ -271,7 +277,7 @@ async function main(): Promise<number> {
     console.error(`ollama-launch: ${parsed.message}`);
     return 1;
   }
-  const { model, baseUrl, displayName, group } = parsed.value;
+  const { model, baseUrl, displayName, agentName, group } = parsed.value;
 
   const preflight = classifyPreflight({
     egressLockdownOn: process.env.NANOCLAW_EGRESS_LOCKDOWN === 'true',
@@ -309,7 +315,11 @@ async function main(): Promise<number> {
   // Creating the cli agent is idempotent. The launcher only passes --display-name
   // on first run; on a re-launch it is omitted and the existing group is resolved
   // from the cli wiring below.
-  if (displayName && !group) runSetupStep('cli-agent', ['--display-name', displayName]);
+  if (displayName && !group) {
+    const cliAgentArgs = ['--display-name', displayName];
+    if (agentName) cliAgentArgs.push('--agent-name', agentName);
+    runSetupStep('cli-agent', cliAgentArgs);
+  }
 
   const db = initDb(path.join(DATA_DIR, 'v2.db'));
   runMigrations(db);

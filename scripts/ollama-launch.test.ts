@@ -51,6 +51,21 @@ describe('parseArgs', () => {
     expect(r.ok && r.value.group).toBe('ag-1');
   });
 
+  it('accepts --agent-name (distinct from --display-name)', () => {
+    const r = parseArgs([
+      '--model',
+      'm',
+      '--base-url',
+      'http://x',
+      '--display-name',
+      'shafnir',
+      '--agent-name',
+      'Ollama',
+    ]);
+    expect(r.ok && r.value.displayName).toBe('shafnir');
+    expect(r.ok && r.value.agentName).toBe('Ollama');
+  });
+
   it('rejects a missing --model', () => {
     expect(parseArgs(['--base-url', 'http://x'])).toEqual({ ok: false, message: 'missing required argument: --model' });
   });
