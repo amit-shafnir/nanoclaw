@@ -89,6 +89,22 @@ pnpm exec tsc -p container/agent-runner/tsconfig.json --noEmit
 ./container/build.sh
 ```
 
+### Restart the host
+
+The image rebuild does not reload the **host**. Codex's host contribution
+(`src/providers/codex.ts`) registers the `/home/node/.codex` bind mount + env
+passthrough, and the running host only picks it up on restart. Skip this and the
+first Codex turn fails with `EACCES` writing `/home/node/.codex/config.toml` —
+with no mount, Docker auto-creates the dir root-owned and the non-root container
+user can't write to it.
+
+```bash
+# macOS (launchd)
+launchctl kickstart -k gui/$(id -u)/com.nanoclaw
+# Linux (systemd)
+systemctl --user restart nanoclaw
+```
+
 ### Validate
 
 ```bash
@@ -99,6 +115,8 @@ cd container/agent-runner && bun test src/providers/
 The registration tests import only the real barrels — they go red if a barrel line is missing, a barrel fails to evaluate, or the payload is broken.
 
 ## Authenticate
+
+> **Run this in a separate, real terminal — it is interactive.** It prompts for ChatGPT-subscription vs OpenAI-API-key and then drives a browser/device login, so it needs a TTY to answer prompts. Do **not** run it through Claude Code's `!` prefix or an agent's Bash tool (no interactive TTY there — the prompts stall and nothing completes).
 
 ```bash
 pnpm exec tsx setup/index.ts --step provider-auth codex
