@@ -2,7 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import { describe, expect, it } from 'vitest';
 
-import { resolveProviderName } from './container-runner.js';
+import { buildPerGroupOverrideArgs, resolveProviderName } from './container-runner.js';
 
 describe('resolveProviderName', () => {
   it('prefers session over container config', () => {
@@ -58,5 +58,42 @@ describe('container boot-failure tripwire (structural)', () => {
     const src = fs.readFileSync(path.join(process.cwd(), 'src', 'container-runner.ts'), 'utf-8');
     expect(src).toContain('stderrTail.push(line)');
     expect(src).toMatch(/Container exited non-zero.*stderrTail/s);
+  });
+});
+
+describe('buildPerGroupOverrideArgs', () => {
+  it('returns no args for empty/absent overrides', () => {
+    expect(buildPerGroupOverrideArgs()).toEqual([]);
+    expect(buildPerGroupOverrideArgs({}, [])).toEqual([]);
+  });
+
+  it('emits -e KEY=VALUE per env entry', () => {
+    expect(buildPerGroupOverrideArgs({ ANTHROPIC_BASE_URL: 'http://host.docker.internal:11434' })).toEqual([
+      '-e',
+      'ANTHROPIC_BASE_URL=http://host.docker.internal:11434',
+    ]);
+  });
+
+  it('emits --add-host HOST:0.0.0.0 per blocked host', () => {
+    expect(buildPerGroupOverrideArgs({}, ['api.anthropic.com'])).toEqual(['--add-host', 'api.anthropic.com:0.0.0.0']);
+  });
+
+  it('emits env before blocked hosts', () => {
+    expect(buildPerGroupOverrideArgs({ K: 'V' }, ['h'])).toEqual(['-e', 'K=V', '--add-host', 'h:0.0.0.0']);
+  });
+});
+
+describe('per-group override emission ordering (structural)', () => {
+  // Per-group env must be emitted AFTER the OneCLI apply so a group's own
+  // ANTHROPIC_BASE_URL (e.g. a local Ollama endpoint) wins — Docker honors the
+  // last -e for a repeated key. Driving buildContainerArgs needs a live gateway,
+  // so this guards the invariant structurally.
+  it('emits per-group overrides after the OneCLI gateway apply', () => {
+    const src = fs.readFileSync(path.join(process.cwd(), 'src', 'container-runner.ts'), 'utf-8');
+    const gatewayApply = src.indexOf('onecli.applyContainerConfig');
+    const overrideEmit = src.indexOf('args.push(...buildPerGroupOverrideArgs(');
+    expect(gatewayApply).toBeGreaterThan(-1);
+    expect(overrideEmit).toBeGreaterThan(-1);
+    expect(overrideEmit).toBeGreaterThan(gatewayApply);
   });
 });
