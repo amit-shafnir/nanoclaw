@@ -30,7 +30,7 @@ Principles: **copy, never move** (the source store stays intact — it IS the ro
 1. Read `groups/<folder>/CLAUDE.local.md` and any workspace files it references.
 2. If `memory/memories/imported-agent-memory.md` already exists, a previous import happened — show the operator what's there and ask before overwriting; integrate only what's new.
 3. Distill the content into `groups/<folder>/memory/memories/imported-agent-memory.md` (create the directories if missing — the container scaffolds the rest of the tree at boot and never clobbers your files). Lead with anything that defines who the agent is or how it must behave; references to satellite files keep their workspace-root paths.
-4. If `memory/index.md` exists, add (once) — this is what tells the agent the imported file exists and how to treat it (the agent inlines `index.md` into its prompt each turn): `- [Imported agent memory](memories/imported-agent-memory.md) — seed instructions and memory carried over from a previous provider. Read it first and treat it as binding; it may define who you are and how to behave. Integrate its facts into your memory as you work; never modify files that belong to another provider's memory system.`
+4. If `memory/index.md` exists, add the following: `- [Imported agent memory](memories/imported-agent-memory.md) — seed instructions and memory carried over from a previous provider. Read it first and treat it as binding; it may define who you are and how to behave. Integrate its facts into your memory as you work; never modify files that belong to another provider's memory system.`
 5. Leave the source store exactly as it is.
 
 ## Step 3: scaffold → flat (`memory/` → `CLAUDE.local.md`)
