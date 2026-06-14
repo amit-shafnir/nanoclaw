@@ -5,9 +5,9 @@ description: Use Codex (OpenAI's codex app-server) as a full agent provider — 
 
 # Codex agent provider
 
-> Shortcut: `pnpm exec tsx setup/index.ts --step provider-auth codex` performs this whole install (manifest-driven from the providers branch: files, barrels, Dockerfile pin, image rebuild) plus auth in one command. The steps below are the same operations, for agent-driven or manual application.
+> Shortcut: `pnpm exec tsx setup/index.ts --step provider-auth codex` performs this whole install (manifest-driven from the providers branch: files, barrels, CLI manifest entry, image rebuild) plus auth in one command. The steps below are the same operations, for agent-driven or manual application.
 
-NanoClaw selects each group's agent backend from `container_configs.provider` (default `claude`). This skill installs the Codex provider: copy the payload from the `providers` branch, append one import to each of the three provider barrels, add the pinned Codex CLI to the Dockerfile, rebuild, then run the vault auth walk-through.
+NanoClaw selects each group's agent backend from `container_configs.provider` (default `claude`). This skill installs the Codex provider: copy the payload from the `providers` branch, append one import to each of the three provider barrels, add the pinned Codex CLI to the container manifest (`container/cli-tools.json`), rebuild, then run the vault auth walk-through.
 
 The provider runs `codex app-server` as a child process speaking JSON-RPC over stdio: native streaming, MCP tools, server-side conversation history (the continuation is a thread id, no on-disk transcript). Credentials are **vault-only**: OneCLI serves a sentinel `auth.json` stub into the container and swaps the real ChatGPT token or API key on the wire — no key in `.env`, nothing readable in the container.
 
@@ -21,7 +21,7 @@ Check whether the payload is already wired (a prior apply, or a trunk that still
 - `container/agent-runner/src/providers/codex.ts` and `codex-app-server.ts`
 - `setup/providers/codex.ts`
 - `import './codex.js';` in `src/providers/index.ts`, `container/agent-runner/src/providers/index.ts`, and `setup/providers/index.ts`
-- `ARG CODEX_VERSION=` in `container/Dockerfile`
+- an `@openai/codex` entry in `container/cli-tools.json`
 
 ### Fetch and copy
 
@@ -45,7 +45,7 @@ Container (`container/agent-runner/src/providers/`):
 - `exchange-archive.test.ts` — writer behavior
 - `codex-registration.test.ts` — barrel-driven container registration guard
 - `codex.factory.test.ts`, `codex.turns.test.ts`, `codex-app-server.test.ts` — provider behavior
-- `codex-dockerfile.test.ts` — structural guard for the Dockerfile install
+- `codex-cli-tools.test.ts` — structural guard for the Codex entry in `container/cli-tools.json`
 
 Setup (`setup/providers/`):
 - `codex.ts` — picker entry self-registration + the vault auth walk-through + install check
@@ -62,15 +62,24 @@ Append `import './codex.js';` to each of:
 - `container/agent-runner/src/providers/index.ts`
 - `setup/providers/index.ts`
 
-### Dockerfile
+### CLI manifest
 
-Copy the two Codex lines verbatim from the branch (the branch's Dockerfile is the canonical pin — do not hand-type a version):
+The agent's global Node CLIs install from `container/cli-tools.json` (a json-merge seam), not hand-edited Dockerfile layers. Add Codex by appending one entry — `@openai/codex` has no native postinstall, so no `onlyBuilt`:
 
 ```bash
-git show origin/providers:container/Dockerfile | grep -A1 'ARG CODEX_VERSION'
+node -e '
+  const fs = require("fs");
+  const file = "container/cli-tools.json";
+  const tools = JSON.parse(fs.readFileSync(file, "utf8"));
+  if (!tools.some((t) => t.name === "@openai/codex")) {
+    tools.push({ name: "@openai/codex", version: "0.138.0" });
+    const fmt = (t) => "  { " + Object.entries(t).map(([k, v]) => JSON.stringify(k) + ": " + JSON.stringify(v)).join(", ") + " }";
+    fs.writeFileSync(file, "[\n" + tools.map(fmt).join(",\n") + "\n]\n");
+  }
+'
 ```
 
-Add the `ARG CODEX_VERSION=<pinned>` line to the version-args block and the `RUN pnpm install -g "@openai/codex@${CODEX_VERSION}"` line to the global-install block (its own layer).
+The version (`0.138.0`) is the canonical pin — keep it in sync with `setup/add-codex.sh`. The Dockerfile already installs every manifest entry via pinned `pnpm install -g`; no Dockerfile edit is needed.
 
 ### Build
 
@@ -113,5 +122,5 @@ There is no install-wide default provider. Setup's provider picker sets codex on
 ## Troubleshooting
 
 - **Container dies at boot, channel silent:** `grep 'Container exited non-zero' logs/nanoclaw.error.log` — the `stderrTail` carries the reason (e.g. `Unknown provider: codex. Registered: claude` means the barrels aren't wired in the running build).
-- **In-channel `Error: spawn codex ENOENT` on every message:** the image predates the Dockerfile edit — re-run `./container/build.sh`.
+- **In-channel `Error: spawn codex ENOENT` on every message:** the image predates the manifest entry — re-run `./container/build.sh`.
 - **Auth errors mid-conversation:** the vault secret is missing or stale — re-run `pnpm exec tsx setup/index.ts --step provider-auth codex` (subscription re-login updates the vault copy).

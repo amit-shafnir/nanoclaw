@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 #
 # Install the Codex agent provider non-interactively: copy the payload from the
-# `providers` branch, wire the three provider barrels, and pin the Codex CLI in
-# the Dockerfile. The image rebuild is the caller's job (the setup container
-# step / `./container/build.sh`).
+# `providers` branch, wire the three provider barrels, and add the Codex CLI to
+# the container manifest (container/cli-tools.json). The image rebuild is the
+# caller's job (the setup container step / `./container/build.sh`).
 #
 # Emits exactly one status block on stdout (ADD_CODEX); all chatty progress
 # goes to stderr. Keep in sync with .claude/skills/add-codex/SKILL.md.
@@ -12,7 +12,8 @@ set -euo pipefail
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$PROJECT_ROOT"
 
-# Keep in sync with the providers-branch Dockerfile and add-codex SKILL.md.
+# Keep in sync with add-codex SKILL.md. This is the canonical Codex CLI pin —
+# it lands in container/cli-tools.json (the global-CLI manifest), not the Dockerfile.
 CODEX_VERSION="0.138.0"
 
 # Resolve the remote carrying the providers branch (same nanoclaw remote that
@@ -38,7 +39,7 @@ PAYLOAD_FILES=(
   container/agent-runner/src/providers/codex.factory.test.ts
   container/agent-runner/src/providers/codex.turns.test.ts
   container/agent-runner/src/providers/codex-app-server.test.ts
-  container/agent-runner/src/providers/codex-dockerfile.test.ts
+  container/agent-runner/src/providers/codex-cli-tools.test.ts
   setup/providers/codex.ts
   setup/providers/codex.test.ts
   setup/providers/codex-registration.test.ts
@@ -63,11 +64,11 @@ emit_status() {
 log() { echo "[add-codex] $*" >&2; }
 
 # Idempotent: a complete install has the host provider file, the host barrel
-# import, and the Dockerfile pin. Any missing → (re)install.
+# import, and the Codex CLI in the container manifest. Any missing → (re)install.
 need_install() {
   [ ! -f src/providers/codex.ts ] && return 0
   ! grep -q "^import './codex.js';" src/providers/index.ts 2>/dev/null && return 0
-  ! grep -q '@openai/codex@' container/Dockerfile 2>/dev/null && return 0
+  ! grep -q '@openai/codex' container/cli-tools.json 2>/dev/null && return 0
   return 1
 }
 
@@ -94,22 +95,27 @@ if need_install; then
     grep -q "^import './codex.js';" "$b" || printf "import './codex.js';\n" >> "$b"
   done
 
-  log "Pinning Codex CLI in the Dockerfile…"
-  DF=container/Dockerfile
-  if ! grep -q "^ARG CODEX_VERSION=" "$DF"; then
-    # Version ARG ahead of the first ARG in the version-args block.
-    awk -v ins="ARG CODEX_VERSION=${CODEX_VERSION}" \
-      'add!=1 && /^ARG /{print ins; add=1} {print}' "$DF" > "$DF.tmp" && mv "$DF.tmp" "$DF"
-  fi
-  if ! grep -q '@openai/codex@' "$DF"; then
-    # Install RUN block (its own cache layer) before the ncl CLI wrapper anchor.
-    awk 'add!=1 && /# ---- ncl CLI wrapper/ {
-           print "RUN --mount=type=cache,target=/root/.cache/pnpm \\"
-           print "    pnpm install -g \"@openai/codex@${CODEX_VERSION}\""
-           print ""
-           add=1
-         } {print}' "$DF" > "$DF.tmp" && mv "$DF.tmp" "$DF"
-  fi
+  log "Adding the Codex CLI to the container manifest (cli-tools.json)…"
+  # A json-merge: append { name, version } if absent. The Dockerfile installs
+  # every manifest entry via pinned `pnpm install -g` — no Dockerfile edit, no
+  # awk surgery. @openai/codex has no native postinstall, so no "onlyBuilt".
+  MANIFEST=container/cli-tools.json
+  node -e '
+    const fs = require("fs");
+    const [file, name, version] = process.argv.slice(1);
+    const tools = JSON.parse(fs.readFileSync(file, "utf8"));
+    if (!tools.some((t) => t.name === name)) {
+      tools.push({ name, version });
+      const fmt = (t) =>
+        "  { " +
+        Object.entries(t).map(([k, v]) => JSON.stringify(k) + ": " + JSON.stringify(v)).join(", ") +
+        " }";
+      fs.writeFileSync(file, "[\n" + tools.map(fmt).join(",\n") + "\n]\n");
+    }
+  ' "$MANIFEST" "@openai/codex" "${CODEX_VERSION}" || {
+    emit_status failed "failed to add @openai/codex to ${MANIFEST}"
+    exit 1
+  }
 fi
 
 emit_status ok

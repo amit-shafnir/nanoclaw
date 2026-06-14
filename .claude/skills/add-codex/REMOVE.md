@@ -37,7 +37,7 @@ rm -f src/providers/codex.ts \
       container/agent-runner/src/providers/codex.factory.test.ts \
       container/agent-runner/src/providers/codex.turns.test.ts \
       container/agent-runner/src/providers/codex-app-server.test.ts \
-      container/agent-runner/src/providers/codex-dockerfile.test.ts \
+      container/agent-runner/src/providers/codex-cli-tools.test.ts \
       setup/providers/codex.ts \
       setup/providers/codex.test.ts \
       setup/providers/codex-registration.test.ts
@@ -47,9 +47,19 @@ This skill itself (`.claude/skills/add-codex/`) stays — it ships with trunk so
 
 `container/AGENTS.md` stays only if another installed provider uses agent surfaces; otherwise remove it too.
 
-## 4. Revert the Dockerfile
+## 4. Remove the CLI manifest entry
 
-Delete the `ARG CODEX_VERSION=...` line and the `RUN pnpm install -g "@openai/codex@${CODEX_VERSION}"` line from `container/Dockerfile`.
+Delete the `@openai/codex` entry from `container/cli-tools.json`:
+
+```bash
+node -e '
+  const fs = require("fs");
+  const file = "container/cli-tools.json";
+  const tools = JSON.parse(fs.readFileSync(file, "utf8")).filter((t) => t.name !== "@openai/codex");
+  const fmt = (t) => "  { " + Object.entries(t).map(([k, v]) => JSON.stringify(k) + ": " + JSON.stringify(v)).join(", ") + " }";
+  fs.writeFileSync(file, "[\n" + tools.map(fmt).join(",\n") + "\n]\n");
+'
+```
 
 ## 5. Vault secret (optional)
 
