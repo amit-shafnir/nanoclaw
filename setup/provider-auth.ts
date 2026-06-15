@@ -22,9 +22,10 @@ import './providers/index.js';
 
 // Hard-wired install scripts — the audited control surface (no branch
 // enumeration). Each setup/add-<name>.sh is idempotent and self-skips when the
-// payload is already wired. Codex is the only manifest-style provider today.
+// payload is already wired.
 const INSTALL_SCRIPTS: Record<string, string> = {
   codex: 'setup/add-codex.sh',
+  opencode: 'setup/add-opencode.sh',
 };
 
 export async function run(args: string[]): Promise<void> {
