@@ -39,6 +39,8 @@ import { fileURLToPath } from 'node:url';
 
 import * as p from '@clack/prompts';
 
+import { runQuietStep } from '../setup/lib/runner.js';
+import { runWindowedStep } from '../setup/lib/windowed-runner.js';
 import { DATA_DIR } from '../src/config.js';
 import { getAgentGroup, getAgentGroupByFolder } from '../src/db/agent-groups.js';
 import { initDb } from '../src/db/connection.js';
@@ -185,18 +187,48 @@ class LaunchError extends Error {
   }
 }
 
-/** Run one headless setup step as a child process, so a step's own process.exit() cannot terminate this orchestrator. */
-function runSetupStep(step: string, stepArgs: string[] = []): void {
-  console.error(`[ollama-launch] setup step: ${step}`);
-  const result = spawnSync('pnpm', ['exec', 'tsx', 'setup/index.ts', '--step', step, ...stepArgs], {
-    stdio: 'inherit',
-  });
-  if (result.error) throw new LaunchError(1, `failed to launch setup step "${step}": ${result.error.message}`);
-  if (result.status !== 0)
-    throw new LaunchError(
-      1,
-      `setup step "${step}" failed (${result.status !== null ? `exit ${result.status}` : `signal ${result.signal}`})`,
-    );
+/** Same wording setup:auto uses, so the two flows read identically. */
+const STEP_LABELS: Record<string, { running: string; done: string; failed?: string }> = {
+  environment: { running: 'Checking your system…', done: 'Your system looks good.' },
+  container: {
+    running: "Preparing your assistant's sandbox…",
+    done: 'Sandbox ready.',
+    failed: "Couldn't prepare the sandbox.",
+  },
+  onecli: { running: 'Setting up the secure gateway…', done: 'Gateway ready.' },
+  mounts: { running: "Setting your assistant's access rules…", done: 'Access rules set.' },
+  service: { running: 'Starting NanoClaw in the background…', done: 'NanoClaw is running.' },
+  'cli-agent': { running: 'Bringing your assistant online…', done: 'Assistant wired up.' },
+};
+
+/**
+ * Run one headless setup step as a child process (its own process.exit() can't
+ * terminate this orchestrator). On a TTY, wrap it in the same clack spinner /
+ * rolling-tail UI setup:auto uses; piped/headless callers keep raw passthrough.
+ */
+async function runSetupStep(step: string, stepArgs: string[] = []): Promise<void> {
+  if (!process.stdout.isTTY) {
+    console.error(`[ollama-launch] setup step: ${step}`);
+    const result = spawnSync('pnpm', ['exec', 'tsx', 'setup/index.ts', '--step', step, ...stepArgs], {
+      stdio: 'inherit',
+    });
+    if (result.error) throw new LaunchError(1, `failed to launch setup step "${step}": ${result.error.message}`);
+    if (result.status !== 0)
+      throw new LaunchError(
+        1,
+        `setup step "${step}" failed (${result.status !== null ? `exit ${result.status}` : `signal ${result.signal}`})`,
+      );
+    return;
+  }
+
+  const labels = STEP_LABELS[step] ?? { running: `${step}…`, done: `${step} done.` };
+  // container is the slow image build → rolling-tail window; everything else → spinner.
+  const res =
+    step === 'container' ? await runWindowedStep(step, labels, stepArgs) : await runQuietStep(step, labels, stepArgs);
+  if (!res.ok) {
+    if (res.transcript) console.error(res.transcript); // ponytail: dump-and-exit instead of auto.ts's fail() UI; add a pretty screen only if it matters
+    throw new LaunchError(1, `setup step "${step}" failed`);
+  }
 }
 
 /** True only when the Docker daemon is installed AND reachable. */
@@ -313,6 +345,17 @@ function runChannelStep(displayName?: string): void {
   });
 }
 
+/** Point one agent group's container config at the Ollama endpoint + model. Idempotent. */
+function wireOllama(agId: string, containerBaseUrl: string, model: string): void {
+  ensureContainerConfig(agId);
+  const row = getContainerConfig(agId);
+  if (!row) throw new LaunchError(1, `container config missing for agent group ${agId}`);
+  const env = { ...(JSON.parse(row.env) as Record<string, string>), ...ollamaEnvOverrides(containerBaseUrl) };
+  updateContainerConfigJson(agId, 'env', env);
+  updateContainerConfigScalars(agId, { model });
+  console.error(`[ollama-launch] wired agent group ${agId} -> ${containerBaseUrl} (model ${model})`);
+}
+
 async function main(): Promise<number> {
   const parsed = parseArgs(process.argv.slice(2));
   if (!parsed.ok) {
@@ -336,14 +379,14 @@ async function main(): Promise<number> {
   // version-current), so a stale marker correctly re-triggers the build.
   const onboarded = isUpgradeCurrent();
   if (!onboarded) {
-    runSetupStep('environment');
+    await runSetupStep('environment');
     if (!isDockerAvailable()) {
       console.error('ollama-launch: Docker is required but not installed/running');
       return 2;
     }
-    runSetupStep('container');
-    runSetupStep('onecli');
-    runSetupStep('mounts', ['--empty']);
+    await runSetupStep('container');
+    await runSetupStep('onecli');
+    await runSetupStep('mounts', ['--empty']);
   }
   // The service step builds the host, stamps the version-sensitive upgrade marker
   // (without which the host refuses to boot), and (re)installs the launchd/systemd
@@ -351,7 +394,7 @@ async function main(): Promise<number> {
   // sessions. So run it on first install, or on a re-launch only when the host is
   // actually down; a normal re-launch of a running host is left untouched.
   if (!onboarded || !isHostServiceRunning()) {
-    runSetupStep('service');
+    await runSetupStep('service');
   }
 
   // Creating the cli agent is idempotent. The launcher only passes --display-name
@@ -360,28 +403,30 @@ async function main(): Promise<number> {
   if (displayName && !group) {
     const cliAgentArgs = ['--display-name', displayName];
     if (agentName) cliAgentArgs.push('--agent-name', agentName);
-    runSetupStep('cli-agent', cliAgentArgs);
+    await runSetupStep('cli-agent', cliAgentArgs);
   }
 
   const db = initDb(path.join(DATA_DIR, 'v2.db'));
   runMigrations(db);
 
   const ag = resolveAgentGroup({ group, displayName });
-  ensureContainerConfig(ag.id);
-  const row = getContainerConfig(ag.id);
-  if (!row) throw new LaunchError(1, `container config missing for agent group ${ag.id}`);
-
-  const env = { ...(JSON.parse(row.env) as Record<string, string>), ...ollamaEnvOverrides(containerBaseUrl) };
-  updateContainerConfigJson(ag.id, 'env', env);
-  updateContainerConfigScalars(ag.id, { model });
-  console.error(`[ollama-launch] wired agent group ${ag.id} -> ${containerBaseUrl} (model ${model})`);
+  wireOllama(ag.id, containerBaseUrl, model);
 
   // Interactive: chat with the agent, then (first run only) pick a channel.
   // Non-TTY callers (the Go launcher pipes/inherits) get the machine-readable
   // success line instead. The tail is soft — neither step flips the exit code.
   if (process.stdin.isTTY && process.stdout.isTTY) {
     await runFirstChat();
-    if (!onboarded) runChannelStep(displayName);
+    if (!onboarded) {
+      runChannelStep(displayName);
+      // The channel step wires the chat to a SEPARATE `dm-with-<name>` agent
+      // group (init-first-agent.ts), which would otherwise default to the
+      // Anthropic provider with no creds. Point it at the same Ollama endpoint.
+      if (displayName) {
+        const dm = getAgentGroupByFolder(`dm-with-${normalizeName(displayName)}`);
+        if (dm) wireOllama(dm.id, containerBaseUrl, model);
+      }
+    }
   } else {
     console.log(`CHAT: cd ${process.cwd()} && pnpm run chat "hi"`);
   }
