@@ -221,7 +221,7 @@ async function runSetupStep(step: string, stepArgs: string[] = []): Promise<void
     return;
   }
 
-  const labels = STEP_LABELS[step] ?? { running: `${step}…`, done: `${step} done.` };
+  const labels = STEP_LABELS[step];
   // container is the slow image build → rolling-tail window; everything else → spinner.
   const res =
     step === 'container' ? await runWindowedStep(step, labels, stepArgs) : await runQuietStep(step, labels, stepArgs);
@@ -318,9 +318,10 @@ async function runFirstChat(): Promise<void> {
       message: 'Say hi to your assistant — or press Enter to continue',
       placeholder: 'e.g. "hi, what can you do?"',
     });
-    if (p.isCancel(msg) || !String(msg).trim()) return;
+    const text = String(msg).trim();
+    if (p.isCancel(msg) || !text) return;
     await new Promise<void>((resolve) =>
-      spawn('pnpm', ['--silent', 'run', 'chat', String(msg).trim()], { stdio: ['ignore', 'inherit', 'inherit'] })
+      spawn('pnpm', ['--silent', 'run', 'chat', text], { stdio: ['ignore', 'inherit', 'inherit'] })
         .on('close', () => resolve())
         .on('error', () => resolve()),
     );
