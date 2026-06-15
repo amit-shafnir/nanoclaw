@@ -95,21 +95,25 @@ function buildOpenCodeConfig(options: ProviderOptions): Record<string, unknown> 
     .filter(Boolean)
     .filter((mid, i, a) => a.indexOf(mid as string) === i);
 
-  const providerOptions: Record<string, unknown> =
-    provider === 'anthropic'
-      ? {}
-      : {
-          [provider]: {
-            options: { apiKey: 'placeholder', baseURL: proxyUrl },
-            ...(modelsToRegister.length > 0
-              ? {
-                  models: Object.fromEntries(
-                    modelsToRegister.map((mid) => [mid, { id: mid, name: mid, tool_call: true }]),
-                  ),
-                }
-              : {}),
-          },
-        };
+  // Every backend needs a placeholder apiKey so OpenCode enables the provider
+  // at startup — it only lists providers it believes have a credential, and
+  // the OneCLI gateway swaps the placeholder for the real key on the wire.
+  // Without it OpenCode reports "no providers found". A custom baseURL (set for
+  // non-Anthropic backends via ANTHROPIC_BASE_URL) and explicit model
+  // registration only apply when routing off the provider's native endpoint;
+  // Anthropic uses its native endpoint and the models.dev catalog.
+  const providerOptions: Record<string, unknown> = {
+    [provider]: {
+      options: { apiKey: 'placeholder', ...(proxyUrl ? { baseURL: proxyUrl } : {}) },
+      ...(proxyUrl && modelsToRegister.length > 0
+        ? {
+            models: Object.fromEntries(
+              modelsToRegister.map((mid) => [mid, { id: mid, name: mid, tool_call: true }]),
+            ),
+          }
+        : {}),
+    },
+  };
 
   const mcp = mcpServersToOpenCodeConfig(options.mcpServers);
 
