@@ -33,9 +33,11 @@
  *     --model <id> --base-url <url> [--display-name <name>] \
  *     [--agent-name <name>] [--group <agent-group-id>]
  */
-import { execSync, spawnSync } from 'node:child_process';
+import { execSync, spawn, spawnSync } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+
+import * as p from '@clack/prompts';
 
 import { DATA_DIR } from '../src/config.js';
 import { getAgentGroup, getAgentGroupByFolder } from '../src/db/agent-groups.js';
@@ -271,6 +273,46 @@ function resolveAgentGroup(input: { group?: string; displayName?: string }): Age
   return ag;
 }
 
+/**
+ * Interactive first conversation with the cli agent. Loops until the operator
+ * presses Enter (or cancels) on an empty prompt. `chat.ts` already connects to
+ * data/cli.sock and waits for the reply (120s timeout), so the reply streams in
+ * with no ping/spinner wrapper here. spawn errors are swallowed: a chat hiccup
+ * must not flip a good install to a non-zero exit.
+ */
+async function runFirstChat(): Promise<void> {
+  for (;;) {
+    const msg = await p.text({
+      message: 'Say hi to your assistant — or press Enter to continue',
+      placeholder: 'e.g. "hi, what can you do?"',
+    });
+    if (p.isCancel(msg) || !String(msg).trim()) return;
+    await new Promise<void>((resolve) =>
+      spawn('pnpm', ['--silent', 'run', 'chat', String(msg).trim()], { stdio: ['ignore', 'inherit', 'inherit'] })
+        .on('close', () => resolve())
+        .on('error', () => resolve()),
+    );
+  }
+}
+
+/**
+ * Run ONLY the channel block of setup/auto.ts by skipping every other step.
+ * NANOCLAW_REEXEC_SG=1 suppresses both the welcome menu and the "already
+ * installed?" prompt, so the picker is reused verbatim with no auto.ts edits.
+ * displayName is omitted on re-launch (auto.ts falls back to the existing name).
+ */
+function runChannelStep(displayName?: string): void {
+  spawnSync('pnpm', ['run', 'setup:auto'], {
+    stdio: 'inherit',
+    env: {
+      ...process.env,
+      NANOCLAW_SKIP: 'environment,container,onecli,auth,mounts,service,cli-agent,first-chat,timezone,verify',
+      NANOCLAW_REEXEC_SG: '1',
+      ...(displayName ? { NANOCLAW_DISPLAY_NAME: displayName } : {}),
+    },
+  });
+}
+
 async function main(): Promise<number> {
   const parsed = parseArgs(process.argv.slice(2));
   if (!parsed.ok) {
@@ -334,7 +376,15 @@ async function main(): Promise<number> {
   updateContainerConfigScalars(ag.id, { model });
   console.error(`[ollama-launch] wired agent group ${ag.id} -> ${containerBaseUrl} (model ${model})`);
 
-  console.log(`CHAT: cd ${process.cwd()} && pnpm run chat "hi"`);
+  // Interactive: chat with the agent, then (first run only) pick a channel.
+  // Non-TTY callers (the Go launcher pipes/inherits) get the machine-readable
+  // success line instead. The tail is soft — neither step flips the exit code.
+  if (process.stdin.isTTY && process.stdout.isTTY) {
+    await runFirstChat();
+    if (!onboarded) runChannelStep(displayName);
+  } else {
+    console.log(`CHAT: cd ${process.cwd()} && pnpm run chat "hi"`);
+  }
   return 0;
 }
 
