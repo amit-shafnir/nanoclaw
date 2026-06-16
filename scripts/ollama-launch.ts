@@ -42,7 +42,7 @@ import * as p from '@clack/prompts';
 import { runQuietStep } from '../setup/lib/runner.js';
 import { runWindowedStep } from '../setup/lib/windowed-runner.js';
 import { DATA_DIR } from '../src/config.js';
-import { getAgentGroup, getAgentGroupByFolder } from '../src/db/agent-groups.js';
+import { createAgentGroup, getAgentGroup, getAgentGroupByFolder } from '../src/db/agent-groups.js';
 import { initDb } from '../src/db/connection.js';
 import {
   ensureContainerConfig,
@@ -346,6 +346,61 @@ function runChannelStep(displayName?: string): void {
   });
 }
 
+/**
+ * Preload the model into Ollama so the user's first message isn't stuck behind a
+ * cold load (gemma4 is ~9.6GB; first inference loads it from disk). `keep_alive:
+ * -1` pins it resident. Uses `hostBaseUrl` — the host-reachable endpoint, not the
+ * container's host.docker.internal rewrite. Best-effort: never fail the launch on
+ * a warmup miss, and cap the wait so a wedged Ollama can't hang the install.
+ */
+async function warmOllama(hostBaseUrl: string, model: string): Promise<void> {
+  const url = `${hostBaseUrl.replace(/\/$/, '')}/api/generate`;
+  try {
+    await fetch(url, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ model, prompt: '', keep_alive: -1 }),
+      signal: AbortSignal.timeout(120_000),
+    });
+  } catch {
+    // best-effort warmup; a cold first message is a worse outcome than a silent miss, not a failure
+  }
+}
+
+/** Generate a DB id in the codebase's `<prefix>-<ts>-<rand>` shape. */
+function generateId(prefix: string): string {
+  return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+/**
+ * Ensure the channel agent group exists and is wired to Ollama BEFORE setup:auto's
+ * channel flow runs. setup:auto's init-first-agent looks up `dm-with-<name>` and
+ * REUSES it if present (init-first-agent.ts), so pre-creating it means the welcome
+ * container spawns on Ollama instead of spawning stale (no env/model) and then
+ * 401-looping against api.anthropic.com. The folder is `dm-with-<name>` for every
+ * direct channel, so this is channel-agnostic.
+ */
+function prewireChannelGroup(
+  displayName: string,
+  agentName: string | undefined,
+  containerBaseUrl: string,
+  model: string,
+): void {
+  const folder = `dm-with-${normalizeName(displayName)}`;
+  let dm = getAgentGroupByFolder(folder);
+  if (!dm) {
+    createAgentGroup({
+      id: generateId('ag'),
+      name: agentName ?? displayName,
+      folder,
+      agent_provider: null,
+      created_at: new Date().toISOString(),
+    });
+    dm = getAgentGroupByFolder(folder)!;
+  }
+  wireOllama(dm.id, containerBaseUrl, model);
+}
+
 /** Point one agent group's container config at the Ollama endpoint + model. Idempotent. */
 function wireOllama(agId: string, containerBaseUrl: string, model: string): void {
   ensureContainerConfig(agId);
@@ -413,20 +468,21 @@ async function main(): Promise<number> {
   const ag = resolveAgentGroup({ group, displayName });
   wireOllama(ag.id, containerBaseUrl, model);
 
+  // Preload the model so the first chat (below) lands warm, not behind a cold load.
+  // Uses baseUrl (host-reachable), not the container's host.docker.internal rewrite.
+  console.error('[ollama-launch] warming up the model…');
+  await warmOllama(baseUrl, model);
+
   // Interactive: chat with the agent, then (first run only) pick a channel.
   // Non-TTY callers (the Go launcher pipes/inherits) get the machine-readable
   // success line instead. The tail is soft — neither step flips the exit code.
   if (process.stdin.isTTY && process.stdout.isTTY) {
     await runFirstChat();
     if (!onboarded) {
+      // Pre-wire the channel group to Ollama BEFORE setup:auto creates it, so its
+      // welcome container spawns on Ollama and reuses our config (no 401-loop race).
+      if (displayName) prewireChannelGroup(displayName, agentName, containerBaseUrl, model);
       runChannelStep(displayName);
-      // The channel step wires the chat to a SEPARATE `dm-with-<name>` agent
-      // group (init-first-agent.ts), which would otherwise default to the
-      // Anthropic provider with no creds. Point it at the same Ollama endpoint.
-      if (displayName) {
-        const dm = getAgentGroupByFolder(`dm-with-${normalizeName(displayName)}`);
-        if (dm) wireOllama(dm.id, containerBaseUrl, model);
-      }
     }
   } else {
     console.log(`CHAT: cd ${process.cwd()} && pnpm run chat "hi"`);
