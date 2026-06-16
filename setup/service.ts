@@ -201,6 +201,21 @@ function setupLaunchd(
     log.error('launchctl load failed', { err });
   }
 
+  // load reads the fresh plist but does NOT reliably start it: on a reload
+  // within a running launchd session RunAtLoad never re-fires (observed via
+  // `launchctl print`: runs=0, "never exited"), so the daemon stays down and
+  // data/cli.sock is never created. kickstart starts it for real. Safe here:
+  // the unload+load above already swapped in the current plist, and labels are
+  // per-checkout, so this can't relaunch a stale binary.
+  try {
+    execSync(`launchctl kickstart -k gui/${process.getuid!()}/${label}`, {
+      stdio: 'ignore',
+    });
+    log.info('launchctl kickstart succeeded');
+  } catch (err) {
+    log.error('launchctl kickstart failed', { err });
+  }
+
   // Verify
   let serviceLoaded = false;
   try {
