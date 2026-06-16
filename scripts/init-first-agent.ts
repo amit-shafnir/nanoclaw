@@ -64,8 +64,7 @@ interface Args {
   role: Role;
 }
 
-const DEFAULT_WELCOME =
-  'System instruction: run /welcome to introduce yourself to the user on this new channel.';
+const DEFAULT_WELCOME = 'System instruction: run /welcome to introduce yourself to the user on this new channel.';
 
 const DEFAULT_ROLE: Role = 'owner';
 
@@ -102,9 +101,7 @@ function parseArgs(argv: string[]): Args {
       case '--role': {
         const raw = (val ?? '').toLowerCase();
         if (raw !== 'owner' && raw !== 'admin' && raw !== 'member') {
-          console.error(
-            `Invalid --role: ${raw} (expected 'owner', 'admin', or 'member')`,
-          );
+          console.error(`Invalid --role: ${raw} (expected 'owner', 'admin', or 'member')`);
           process.exit(2);
         }
         out.role = raw;
@@ -143,11 +140,12 @@ function generateId(prefix: string): string {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
-function wireIfMissing(mg: MessagingGroup, ag: AgentGroup, now: string, label: string): void {
+/** Returns true if a new wiring was created, false if one already existed. */
+function wireIfMissing(mg: MessagingGroup, ag: AgentGroup, now: string, label: string): boolean {
   const existing = getMessagingGroupAgentByPair(mg.id, ag.id);
   if (existing) {
     console.log(`Wiring already exists: ${existing.id} (${label})`);
-    return;
+    return false;
   }
   createMessagingGroupAgent({
     id: generateId('mga'),
@@ -165,6 +163,7 @@ function wireIfMissing(mg: MessagingGroup, ag: AgentGroup, now: string, label: s
     created_at: now,
   });
   console.log(`Wired ${label}: ${mg.id} -> ${ag.id}`);
+  return true;
 }
 
 async function main(): Promise<void> {
@@ -232,9 +231,7 @@ async function main(): Promise<void> {
   // getUserRoles prevents duplicates on re-runs.
   const existingRoles = getUserRoles(userId);
   if (args.role === 'owner') {
-    const alreadyOwner = existingRoles.some(
-      (r) => r.role === 'owner' && r.agent_group_id === null,
-    );
+    const alreadyOwner = existingRoles.some((r) => r.role === 'owner' && r.agent_group_id === null);
     if (!alreadyOwner) {
       grantRole({
         user_id: userId,
@@ -247,9 +244,7 @@ async function main(): Promise<void> {
     // Owner's agent group gets global CLI access
     updateContainerConfigScalars(ag.id, { cli_scope: 'global' });
   } else if (args.role === 'admin') {
-    const alreadyAdmin = existingRoles.some(
-      (r) => r.role === 'admin' && r.agent_group_id === ag.id,
-    );
+    const alreadyAdmin = existingRoles.some((r) => r.role === 'admin' && r.agent_group_id === ag.id);
     if (!alreadyAdmin) {
       grantRole({
         user_id: userId,
@@ -293,23 +288,27 @@ async function main(): Promise<void> {
   }
 
   // 4. Wire DM messaging group to the agent.
-  wireIfMissing(dmMg, ag, now, 'dm');
+  const newlyWired = wireIfMissing(dmMg, ag, now, 'dm');
 
-  // 5. Welcome delivery over the CLI socket. Router picks up the line,
-  // writes the message into the DM session's inbound.db, and wakes the
-  // container synchronously — no sweep wait. The paired user's identity is
-  // passed so the sender resolver sees the real owner, not cli:local.
-  await sendWelcomeViaCliSocket(dmMg, args.welcome, {
-    senderId: userId,
-    sender: args.displayName,
-  });
+  // 5. Welcome delivery over the CLI socket — only when the channel was just
+  // wired. The wiring is the durable "already greeted" signal: it survives an
+  // upgrade (which clears the onboarded marker and re-runs this step), so re-runs
+  // against an existing wiring skip the welcome instead of re-greeting. A full
+  // data/ wipe drops the wiring too — that's a fresh install and should re-greet.
+  // Router picks up the line, writes it into the DM session's inbound.db, and
+  // wakes the container synchronously. The paired user's identity is passed so
+  // the sender resolver sees the real owner, not cli:local.
+  if (newlyWired) {
+    await sendWelcomeViaCliSocket(dmMg, args.welcome, {
+      senderId: userId,
+      sender: args.displayName,
+    });
+  } else {
+    console.log('Channel already wired — skipping welcome (already greeted).');
+  }
 
   const roleLabel =
-    args.role === 'owner'
-      ? 'owner (global)'
-      : args.role === 'admin'
-        ? `admin (scoped to ${ag.id})`
-        : 'member';
+    args.role === 'owner' ? 'owner (global)' : args.role === 'admin' ? `admin (scoped to ${ag.id})` : 'member';
 
   console.log('');
   console.log('Init complete.');
@@ -318,7 +317,9 @@ async function main(): Promise<void> {
   console.log(`  agent:   ${ag.name} [${ag.id}] @ groups/${folder}`);
   console.log(`  channel: ${args.channel} ${dmMg.platform_id}`);
   console.log('');
-  console.log('Welcome DM queued — the agent will greet you shortly.');
+  if (newlyWired) {
+    console.log('Welcome DM queued — the agent will greet you shortly.');
+  }
 }
 
 /**
@@ -354,11 +355,7 @@ async function sendWelcomeViaCliSocket(
     };
 
     socket.once('error', (err) =>
-      settle(
-        new Error(
-          `CLI socket at ${sockPath} not reachable: ${err.message}. Is the NanoClaw service running?`,
-        ),
-      ),
+      settle(new Error(`CLI socket at ${sockPath} not reachable: ${err.message}. Is the NanoClaw service running?`)),
     );
     socket.once('connect', () => {
       const payload =
