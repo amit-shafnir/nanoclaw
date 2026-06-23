@@ -39,6 +39,7 @@ import { fileURLToPath } from 'node:url';
 
 import * as p from '@clack/prompts';
 
+import { pingCliAgent, type PingResult } from '../setup/lib/agent-ping.js';
 import { runQuietStep } from '../setup/lib/runner.js';
 import { runWindowedStep } from '../setup/lib/windowed-runner.js';
 import { DATA_DIR } from '../src/config.js';
@@ -219,6 +220,22 @@ class LaunchError extends Error {
     super(message);
     this.name = 'LaunchError';
   }
+}
+
+type CliReadinessPing = () => Promise<PingResult>;
+
+export async function ensureCliAgentReady(ping: CliReadinessPing = pingCliAgent): Promise<void> {
+  const result = await ping();
+  if (result === 'ok') return;
+  const restart =
+    process.platform === 'darwin'
+      ? `launchctl kickstart -k gui/$(id -u)/${getLaunchdLabel()}`
+      : `systemctl --user restart ${getSystemdUnit()}`;
+  const message =
+    result === 'socket_error'
+      ? `NanoClaw service is not listening on data/cli.sock. Try: ${restart}`
+      : 'Ollama-routed assistant did not reply during readiness check. Check logs/nanoclaw.log.';
+  throw new LaunchError(1, message);
 }
 
 /** Same wording setup:auto uses, so the two flows read identically. */
@@ -531,6 +548,7 @@ async function main(): Promise<number> {
   // Uses baseUrl (host-reachable), not the container's host.docker.internal rewrite.
   console.error('[ollama-launch] warming up the model…');
   await warmOllama(baseUrl, model);
+  await ensureCliAgentReady();
 
   // warmOllama loads weights only; prime the binary's system+tools prefix into
   // Ollama's KV cache with one real turn so the first user message lands warm.

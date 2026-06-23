@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   classifyPreflight,
+  ensureCliAgentReady,
   mergeOllamaEnv,
   ollamaBlockedHosts,
   ollamaEnvOverrides,
@@ -165,6 +166,19 @@ describe('classifyPreflight', () => {
     const r = classifyPreflight({ egressLockdownOn: true });
     expect(r.ok).toBe(false);
     expect(!r.ok && r.exitCode).toBe(3);
+  });
+});
+
+describe('ensureCliAgentReady', () => {
+  it('returns when the cli agent answers', async () => {
+    await expect(ensureCliAgentReady(async () => 'ok')).resolves.toBeUndefined();
+  });
+
+  it('fails before chat when the cli socket is not reachable', async () => {
+    await expect(ensureCliAgentReady(async () => 'socket_error')).rejects.toMatchObject({
+      exitCode: 1,
+      message: expect.stringContaining('data/cli.sock'),
+    });
   });
 });
 
