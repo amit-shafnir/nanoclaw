@@ -174,8 +174,24 @@ describe('ensureCliAgentReady', () => {
     await expect(ensureCliAgentReady(async () => 'ok')).resolves.toBeUndefined();
   });
 
-  it('fails before chat when the cli socket is not reachable', async () => {
-    await expect(ensureCliAgentReady(async () => 'socket_error')).rejects.toMatchObject({
+  it('restarts the host once when the cli socket is not reachable', async () => {
+    const results = ['socket_error', 'ok'] as const;
+    let calls = 0;
+    let restarts = 0;
+    await expect(
+      ensureCliAgentReady(
+        async () => results[calls++] ?? 'no_reply',
+        () => {
+          restarts += 1;
+        },
+      ),
+    ).resolves.toBeUndefined();
+    expect(restarts).toBe(1);
+    expect(calls).toBe(2);
+  });
+
+  it('fails before chat when the cli socket is still unreachable after restart', async () => {
+    await expect(ensureCliAgentReady(async () => 'socket_error', () => {})).rejects.toMatchObject({
       exitCode: 1,
       message: expect.stringContaining('data/cli.sock'),
     });

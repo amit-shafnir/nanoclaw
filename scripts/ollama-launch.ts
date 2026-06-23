@@ -33,7 +33,7 @@
  *     --model <id> --base-url <url> [--display-name <name>] \
  *     [--agent-name <name>] [--group <agent-group-id>]
  */
-import { execSync, spawn, spawnSync } from 'node:child_process';
+import { execFileSync, execSync, spawn, spawnSync } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -223,17 +223,42 @@ class LaunchError extends Error {
 }
 
 type CliReadinessPing = () => Promise<PingResult>;
+type HostServiceRestart = () => void;
 
-export async function ensureCliAgentReady(ping: CliReadinessPing = pingCliAgent): Promise<void> {
-  const result = await ping();
+function hostRestartCommandText(): string {
+  return process.platform === 'darwin'
+    ? `launchctl kickstart -k gui/$(id -u)/${getLaunchdLabel()}`
+    : `systemctl --user restart ${getSystemdUnit()}`;
+}
+
+function restartHostService(): void {
+  try {
+    if (process.platform === 'darwin') {
+      execFileSync('launchctl', ['kickstart', '-k', `gui/${process.getuid?.() ?? 501}/${getLaunchdLabel()}`], {
+        stdio: 'ignore',
+      });
+    } else if (process.platform === 'linux') {
+      execFileSync('systemctl', ['--user', 'restart', getSystemdUnit()], { stdio: 'ignore' });
+    }
+  } catch {
+    // The follow-up ping reports the actionable failure; restart is best-effort.
+  }
+}
+
+export async function ensureCliAgentReady(
+  ping: CliReadinessPing = pingCliAgent,
+  restart: HostServiceRestart = restartHostService,
+): Promise<void> {
+  let result = await ping();
   if (result === 'ok') return;
-  const restart =
-    process.platform === 'darwin'
-      ? `launchctl kickstart -k gui/$(id -u)/${getLaunchdLabel()}`
-      : `systemctl --user restart ${getSystemdUnit()}`;
+  if (result === 'socket_error') {
+    restart();
+    result = await ping();
+    if (result === 'ok') return;
+  }
   const message =
     result === 'socket_error'
-      ? `NanoClaw service is not listening on data/cli.sock. Try: ${restart}`
+      ? `NanoClaw service is not listening on data/cli.sock. Try: ${hostRestartCommandText()}`
       : 'Ollama-routed assistant did not reply during readiness check. Check logs/nanoclaw.log.';
   throw new LaunchError(1, message);
 }
