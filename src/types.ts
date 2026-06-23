@@ -25,6 +25,8 @@ export interface ContainerConfigRow {
   packages_npm: string; // JSON: string[]
   additional_mounts: string; // JSON: AdditionalMountConfig[]
   cli_scope: string; // 'disabled' | 'group' | 'global'
+  env: string; // JSON: Record<string,string> — per-group container env overrides
+  blocked_hosts: string; // JSON: string[] — hostnames nulled via --add-host HOST:0.0.0.0
   updated_at: string;
 }
 

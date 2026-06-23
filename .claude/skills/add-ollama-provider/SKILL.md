@@ -92,7 +92,8 @@ Read `groups/<FOLDER>/container.json`. Add (or merge into) an `env` block and op
     "ANTHROPIC_BASE_URL": "http://host.docker.internal:11434",
     "ANTHROPIC_API_KEY": "ollama",
     "NO_PROXY": "host.docker.internal",
-    "no_proxy": "host.docker.internal"
+    "no_proxy": "host.docker.internal",
+    "CLAUDE_CODE_ATTRIBUTION_HEADER": "off"
   },
   "blockedHosts": ["api.anthropic.com"]
 }
@@ -104,6 +105,13 @@ Omit `blockedHosts` if the user declined step 2.
 `ANTHROPIC_API_KEY=ollama` satisfies the SDK's key requirement (Ollama ignores it).
 `NO_PROXY` bypasses the OneCLI HTTPS proxy for requests to `host.docker.internal`
 so they reach Ollama directly instead of going through the credential gateway.
+`CLAUDE_CODE_ATTRIBUTION_HEADER=off` stops the bundled binary from stamping its
+rotating billing line (`x-anthropic-billing-header` / `cch` + `cc_version`) at the
+front of every request — that changing front busts Ollama's prefix cache and is
+what makes replies get slower every turn (see "Per-turn latency" in
+`docs/ollama.md`). Full capability is kept; nothing about the prompt or tools is
+cut. It's an undocumented var — re-check it against the request body on a binary
+bump.
 
 ## 4. Set the model
 
