@@ -34,12 +34,12 @@
  *     [--agent-name <name>] [--group <agent-group-id>]
  */
 import { execFileSync, execSync, spawn, spawnSync } from 'node:child_process';
+import net from 'node:net';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import * as p from '@clack/prompts';
 
-import { pingCliAgent, type PingResult } from '../setup/lib/agent-ping.js';
 import { runQuietStep } from '../setup/lib/runner.js';
 import { runWindowedStep } from '../setup/lib/windowed-runner.js';
 import { DATA_DIR } from '../src/config.js';
@@ -222,8 +222,14 @@ class LaunchError extends Error {
   }
 }
 
-type CliReadinessPing = () => Promise<PingResult>;
+type SocketProbe = () => Promise<boolean>;
 type HostServiceRestart = () => void;
+
+interface SocketWaitOptions {
+  attempts?: number;
+  intervalMs?: number;
+  restartAfter?: number;
+}
 
 function hostRestartCommandText(): string {
   return process.platform === 'darwin'
@@ -241,26 +247,48 @@ function restartHostService(): void {
       execFileSync('systemctl', ['--user', 'restart', getSystemdUnit()], { stdio: 'ignore' });
     }
   } catch {
-    // The follow-up ping reports the actionable failure; restart is best-effort.
+    // The follow-up socket probe reports the actionable failure; restart is best-effort.
   }
 }
 
-export async function ensureCliAgentReady(
-  ping: CliReadinessPing = pingCliAgent,
+/** Resolves true if something accepts a connection on data/cli.sock within `timeoutMs`. */
+function cliSocketAccepts(timeoutMs = 2_000): Promise<boolean> {
+  return new Promise((resolve) => {
+    const socket = net.connect(path.join(DATA_DIR, 'cli.sock'));
+    let settled = false;
+    const finish = (ok: boolean): void => {
+      if (settled) return;
+      settled = true;
+      socket.destroy();
+      resolve(ok);
+    };
+    socket.setTimeout(timeoutMs);
+    socket.once('connect', () => finish(true));
+    socket.once('timeout', () => finish(false));
+    socket.once('error', () => finish(false));
+  });
+}
+
+/**
+ * Block until the host is listening on data/cli.sock, then return. A plain socket
+ * connect — not a model round-trip — is the right readiness signal: it confirms
+ * launchd brought the host up without paying a cold inference or aborting on a
+ * slow model. This gates the cache prime below: primeModelCache swallows connect
+ * errors, so priming against a not-yet-bound socket would silently no-op and leave
+ * the first turns cold (the launchd race that made replies slow again). Restarts
+ * the host once if the socket hasn't come up by `restartAfter` tries.
+ */
+export async function waitForCliSocket(
+  probe: SocketProbe = cliSocketAccepts,
   restart: HostServiceRestart = restartHostService,
+  { attempts = 20, intervalMs = 1_000, restartAfter = 10 }: SocketWaitOptions = {},
 ): Promise<void> {
-  let result = await ping();
-  if (result === 'ok') return;
-  if (result === 'socket_error') {
-    restart();
-    result = await ping();
-    if (result === 'ok') return;
+  for (let i = 0; i < attempts; i++) {
+    if (await probe()) return;
+    if (i === restartAfter - 1) restart();
+    await new Promise<void>((resolve) => setTimeout(resolve, intervalMs));
   }
-  const message =
-    result === 'socket_error'
-      ? `NanoClaw service is not listening on data/cli.sock. Try: ${hostRestartCommandText()}`
-      : 'Ollama-routed assistant did not reply during readiness check. Check logs/nanoclaw.log.';
-  throw new LaunchError(1, message);
+  throw new LaunchError(1, `NanoClaw service is not listening on data/cli.sock. Try: ${hostRestartCommandText()}`);
 }
 
 /** Same wording setup:auto uses, so the two flows read identically. */
@@ -573,7 +601,9 @@ async function main(): Promise<number> {
   // Uses baseUrl (host-reachable), not the container's host.docker.internal rewrite.
   console.error('[ollama-launch] warming up the model…');
   await warmOllama(baseUrl, model);
-  await ensureCliAgentReady();
+  // Gate the prime on a live socket: priming a not-yet-bound host silently
+  // no-ops and leaves the first turns cold.
+  await waitForCliSocket();
 
   // warmOllama loads weights only; prime the binary's system+tools prefix into
   // Ollama's KV cache with one real turn so the first user message lands warm.

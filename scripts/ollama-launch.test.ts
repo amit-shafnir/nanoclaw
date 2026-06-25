@@ -2,13 +2,13 @@ import { describe, expect, it } from 'vitest';
 
 import {
   classifyPreflight,
-  ensureCliAgentReady,
   mergeOllamaEnv,
   ollamaBlockedHosts,
   ollamaEnvOverrides,
   parseArgs,
   rewriteBaseUrlForContainer,
   selectPrimaryWiring,
+  waitForCliSocket,
 } from './ollama-launch.js';
 import type { MessagingGroupAgent } from '../src/types.js';
 
@@ -169,32 +169,53 @@ describe('classifyPreflight', () => {
   });
 });
 
-describe('ensureCliAgentReady', () => {
-  it('returns when the cli agent answers', async () => {
-    await expect(ensureCliAgentReady(async () => 'ok')).resolves.toBeUndefined();
-  });
-
-  it('restarts the host once when the cli socket is not reachable', async () => {
-    const results = ['socket_error', 'ok'] as const;
-    let calls = 0;
+describe('waitForCliSocket', () => {
+  it('returns as soon as the socket accepts a connection', async () => {
     let restarts = 0;
     await expect(
-      ensureCliAgentReady(
-        async () => results[calls++] ?? 'no_reply',
+      waitForCliSocket(
+        async () => true,
         () => {
           restarts += 1;
         },
+        { intervalMs: 0 },
+      ),
+    ).resolves.toBeUndefined();
+    expect(restarts).toBe(0);
+  });
+
+  it('restarts the host once, then returns when the socket comes up', async () => {
+    const results = [false, true];
+    let calls = 0;
+    let restarts = 0;
+    await expect(
+      waitForCliSocket(
+        async () => results[calls++] ?? false,
+        () => {
+          restarts += 1;
+        },
+        { attempts: 5, intervalMs: 0, restartAfter: 1 },
       ),
     ).resolves.toBeUndefined();
     expect(restarts).toBe(1);
     expect(calls).toBe(2);
   });
 
-  it('fails before chat when the cli socket is still unreachable after restart', async () => {
-    await expect(ensureCliAgentReady(async () => 'socket_error', () => {})).rejects.toMatchObject({
+  it('throws after restarting once when the socket never comes up', async () => {
+    let restarts = 0;
+    await expect(
+      waitForCliSocket(
+        async () => false,
+        () => {
+          restarts += 1;
+        },
+        { attempts: 3, intervalMs: 0, restartAfter: 1 },
+      ),
+    ).rejects.toMatchObject({
       exitCode: 1,
       message: expect.stringContaining('data/cli.sock'),
     });
+    expect(restarts).toBe(1);
   });
 });
 
