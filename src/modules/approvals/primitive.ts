@@ -206,14 +206,20 @@ export interface RequestApprovalOptions {
  * DM, and records the pending_approvals row. Fire-and-forget from the
  * caller's perspective — the admin's response kicks off the registered
  * approval handler for this action via the response dispatcher.
+ *
+ * Returns `true` if the request was queued (row created + card delivered),
+ * `false` if it bailed early (no approver, no DM, delivery failed) — in which
+ * case the requester has already been notified of the failure. Callers that
+ * want to add their own follow-up note can gate it on the return value to
+ * avoid contradicting that failure message.
  */
-export async function requestApproval(opts: RequestApprovalOptions): Promise<void> {
+export async function requestApproval(opts: RequestApprovalOptions): Promise<boolean> {
   const { session, action, payload, title, question, agentName, approverUserId } = opts;
 
   const approvers = approverUserId ? [approverUserId] : pickApprover(session.agent_group_id);
   if (approvers.length === 0) {
     notifyAgent(session, `${action} failed: no owner or admin configured to approve.`);
-    return;
+    return false;
   }
 
   const originChannelType = session.messaging_group_id
@@ -223,7 +229,7 @@ export async function requestApproval(opts: RequestApprovalOptions): Promise<voi
   const target = await pickApprovalDelivery(approvers, originChannelType);
   if (!target) {
     notifyAgent(session, `${action} failed: no DM channel found for any eligible approver.`);
-    return;
+    return false;
   }
 
   const approvalId = `appr-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -259,9 +265,10 @@ export async function requestApproval(opts: RequestApprovalOptions): Promise<voi
     } catch (err) {
       log.error('Failed to deliver approval card', { action, approvalId, err });
       notifyAgent(session, `${action} failed: could not deliver approval request to ${target.userId}.`);
-      return;
+      return false;
     }
   }
 
   log.info('Approval requested', { action, approvalId, agentName, approver: target.userId });
+  return true;
 }

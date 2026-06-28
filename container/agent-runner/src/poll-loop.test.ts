@@ -4,7 +4,7 @@ import { initTestSessionDb, closeSessionDb, getInboundDb, getOutboundDb } from '
 import { getPendingMessages, markCompleted } from './db/messages-in.js';
 import { getUndeliveredMessages } from './db/messages-out.js';
 import { formatMessages, extractRouting } from './formatter.js';
-import { isCorruptionError, processQuery } from './poll-loop.js';
+import { isCorruptionError, isLikelyAuthError, processQuery } from './poll-loop.js';
 import { MockProvider } from './providers/mock.js';
 import type { AgentQuery, ProviderEvent } from './providers/types.js';
 
@@ -220,7 +220,13 @@ describe('origin metadata (from= attribute)', () => {
       .run(name, name, channelType, platformId);
   }
 
-  function insertWithRouting(id: string, kind: string, content: object, channelType: string | null, platformId: string | null): void {
+  function insertWithRouting(
+    id: string,
+    kind: string,
+    content: object,
+    channelType: string | null,
+    platformId: string | null,
+  ): void {
     getInboundDb()
       .prepare(
         `INSERT INTO messages_in (id, kind, timestamp, status, platform_id, channel_type, content)
@@ -452,5 +458,26 @@ describe('isCorruptionError', () => {
     expect(isCorruptionError('database is locked')).toBe(false);
     expect(isCorruptionError('no such table: messages_in')).toBe(false);
     expect(isCorruptionError('')).toBe(false);
+  });
+});
+
+describe('isLikelyAuthError', () => {
+  it('matches an HTTP 401/403 status on the error object', () => {
+    expect(isLikelyAuthError({ status: 401 })).toBe(true);
+    expect(isLikelyAuthError({ statusCode: 403 })).toBe(true);
+  });
+
+  it('matches auth phrasing across providers', () => {
+    expect(isLikelyAuthError(new Error('401 {"type":"authentication_error"}'))).toBe(true);
+    expect(isLikelyAuthError(new Error('Request failed: Unauthorized'))).toBe(true);
+    expect(isLikelyAuthError(new Error('invalid_api_key'))).toBe(true);
+    expect(isLikelyAuthError(new Error('OAuth token has expired'))).toBe(true);
+  });
+
+  it('returns false for non-credential errors', () => {
+    expect(isLikelyAuthError(new Error('500 internal server error'))).toBe(false);
+    expect(isLikelyAuthError(new Error('ECONNREFUSED'))).toBe(false);
+    expect(isLikelyAuthError('database disk image is malformed')).toBe(false);
+    expect(isLikelyAuthError({ status: 429 })).toBe(false);
   });
 });
