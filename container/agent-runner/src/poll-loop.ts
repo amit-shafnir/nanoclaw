@@ -43,6 +43,21 @@ export function isCorruptionError(msg: string): boolean {
   );
 }
 
+/**
+ * True when a provider error looks like missing or invalid credentials. The
+ * providers (Anthropic SDK, Codex, OpenCode) don't share an error class, so we
+ * sniff the HTTP status and message text instead of matching a type. Used to
+ * turn the raw SDK error into an actionable "credentials aren't set up" reply —
+ * the common failure when a provider is installed but never authenticated
+ * (e.g. a fresh `/add-codex` before its key, or claude on a codex-only box).
+ */
+export function isLikelyAuthError(err: unknown): boolean {
+  const obj = typeof err === 'object' && err !== null ? (err as { status?: unknown; statusCode?: unknown }) : undefined;
+  if (obj?.status === 401 || obj?.status === 403 || obj?.statusCode === 401 || obj?.statusCode === 403) return true;
+  const msg = (err instanceof Error ? err.message : String(err)).toLowerCase();
+  return /\b40[13]\b|unauthorized|forbidden|authentication|invalid[ _-]?api[ _-]?key|oauth/.test(msg);
+}
+
 function log(msg: string): void {
   console.error(`[poll-loop] ${msg}`);
 }
@@ -265,14 +280,21 @@ export async function runPollLoop(config: PollLoopConfig): Promise<void> {
         clearContinuation(config.providerName);
       }
 
-      // Write error response so the user knows something went wrong
+      // Write error response so the user knows something went wrong. A
+      // credentials failure gets an actionable note instead of the raw SDK
+      // error — the provider is reachable but not authenticated on this host,
+      // which only an admin can fix.
+      const text = isLikelyAuthError(err)
+        ? `I'm not set up to use ${config.providerName} yet — there are no working credentials for it on this machine. ` +
+          `An admin needs to add them (e.g. run /init-onecli, or set the credential in the OneCLI vault), then message me again.`
+        : `Error: ${errMsg}`;
       writeMessageOut({
         id: generateId(),
         kind: 'chat',
         platform_id: routing.platformId,
         channel_type: routing.channelType,
         thread_id: routing.threadId,
-        content: JSON.stringify({ text: `Error: ${errMsg}` }),
+        content: JSON.stringify({ text }),
       });
     } finally {
       clearCurrentInReplyTo();
