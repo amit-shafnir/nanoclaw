@@ -17,10 +17,12 @@ import path from 'path';
 import { GROUPS_DIR } from '../../config.js';
 import { createAgentGroup, getAgentGroup, getAgentGroupByFolder } from '../../db/agent-groups.js';
 import { getContainerConfig, updateContainerConfigScalars } from '../../db/container-configs.js';
+import { getMessagingGroup } from '../../db/messaging-groups.js';
 import { getSession } from '../../db/sessions.js';
 import { wakeContainer } from '../../container-runner.js';
 import { initGroupFilesystem } from '../../group-init.js';
 import { log } from '../../log.js';
+import { isProviderReady } from '../../providers/provider-container-registry.js';
 import { writeSessionMessage } from '../../session-manager.js';
 import type { AgentGroup, Session } from '../../types.js';
 import { requestApproval, type ApprovalHandler } from '../approvals/index.js';
@@ -59,6 +61,17 @@ function notifyAgent(session: Session, text: string): void {
 export async function handleCreateAgent(content: Record<string, unknown>, session: Session): Promise<void> {
   const name = typeof content.name === 'string' ? content.name : '';
   const instructions = typeof content.instructions === 'string' ? content.instructions : null;
+  const providerRaw = typeof content.provider === 'string' ? content.provider.trim().toLowerCase() : '';
+  const provider = providerRaw || undefined;
+
+  // `provider` reaches a human via the approval card (and the `/add-<provider>`
+  // hint). The container is untrusted, so restrict it to a bare provider-name
+  // shape — no newlines/markdown to spoof or mislead the approver. Matches the
+  // registry/folder naming the spawn path already assumes.
+  if (provider !== undefined && !/^[a-z0-9-]+$/.test(provider)) {
+    notifyAgent(session, 'create_agent failed: provider must be a short name like "codex" (letters, digits, hyphens).');
+    return;
+  }
 
   if (!name) {
     notifyAgent(session, 'create_agent failed: name is required.');
@@ -72,21 +85,93 @@ export async function handleCreateAgent(content: Record<string, unknown>, sessio
     return;
   }
 
-  const cliScope = getContainerConfig(session.agent_group_id)?.cli_scope ?? 'group';
+  const config = getContainerConfig(session.agent_group_id);
+  const cliScope = config?.cli_scope ?? 'group';
+  // Measure the request against the parent's OWN runtime: a codex parent
+  // creating a codex child is same-provider (no new runtime is being adopted).
+  // Cross-provider only changes the copy/readiness handling for confined
+  // groups; authorization stays scope-based (global creates directly, confined
+  // needs approval) exactly as it does for same-provider creates.
+  const parentProvider = (config?.provider ?? 'claude').toLowerCase();
+  const isCrossProvider = provider !== undefined && provider !== parentProvider;
+
   if (cliScope === 'global') {
-    // Trusted owner agent group — create directly, then notify (+wake) it.
-    await performCreateAgent(name, instructions, session, sourceGroup, (text) => notifyAgent(session, text));
+    // Trusted owner agent group — create directly, same trust it already has
+    // for same-provider creates and unrestricted ncl. No approval tap. A
+    // cross-provider request still needs the target installed; there's no human
+    // in this path to prompt, so fail with a clear instruction rather than
+    // stamping a child on a runtime it can't boot.
+    if (isCrossProvider && !isProviderReady(provider)) {
+      notifyAgent(
+        session,
+        `Can't create "${name}" on ${provider}: it isn't installed. Run \`/add-${provider}\` on the host, then try again.`,
+      );
+      return;
+    }
+    await performCreateAgent(
+      name,
+      instructions,
+      session,
+      sourceGroup,
+      (text) => notifyAgent(session, text),
+      isCrossProvider ? provider : undefined,
+    );
     return;
   }
 
-  await requestApproval({
+  // Confined (non-global) agent group — the realistic prompt-injection victim.
+  // Every create needs an admin to approve before any central-DB write.
+  if (!isCrossProvider) {
+    await requestApproval({
+      session,
+      agentName: sourceGroup.name,
+      action: 'create_agent',
+      payload: { name, instructions },
+      title: `Create agent: ${name}`,
+      question: `Agent "${sourceGroup.name}" wants to create a new sub-agent "${name}" (a new agent group with its own workspace and container). Approve?`,
+    });
+    return;
+  }
+
+  // Cross-provider from a confined group: a new agent on a runtime the parent
+  // doesn't run on. Readiness-aware card + requester note.
+  const ready = isProviderReady(provider);
+  const requestedBy = describeRequester(sourceGroup.name, session);
+  const title = ready ? `Create agent: ${name} (${provider})` : `Install ${provider} to create ${name}`;
+  const question = ready
+    ? `${requestedBy} wants to create a new sub-agent "${name}" running on ${provider} (a new agent group with its own workspace and container). Approve to create it; the requester is notified when it's ready.`
+    : `${requestedBy} wants to create "${name}" on ${provider}, but ${provider} isn't installed yet. Install it first — run \`/add-${provider}\` on the host — then approve. Approving before install cancels the request. On approval, "${name}" is created and the requester is notified.`;
+
+  const queued = await requestApproval({
     session,
     agentName: sourceGroup.name,
     action: 'create_agent',
-    payload: { name, instructions },
-    title: `Create agent: ${name}`,
-    question: `Agent "${sourceGroup.name}" wants to create a new sub-agent "${name}" (a new agent group with its own workspace and container). Approve?`,
+    payload: { name, instructions, provider },
+    title,
+    question,
   });
+
+  if (queued) {
+    notifyAgent(
+      session,
+      ready
+        ? `Requested a new ${provider} agent "${name}". An admin needs to approve it — I'll let you know when it's created.`
+        : `${provider} isn't set up yet, so I've asked an admin to enable it and approve creating "${name}". I'll let you know when it's ready.`,
+    );
+  }
+}
+
+/**
+ * Human-readable attribution for the approval card — the source agent plus its
+ * originating channel/group when cheaply resolvable. Lets an admin approving on
+ * someone else's behalf see who asked. Full handle attribution is best-effort
+ * and omitted when not available.
+ */
+function describeRequester(agentName: string, session: Session): string {
+  const label = `Agent "${agentName}"`;
+  const mg = session.messaging_group_id ? getMessagingGroup(session.messaging_group_id) : undefined;
+  if (!mg) return label;
+  return `${label} (via ${mg.name ? `${mg.channel_type}, ${mg.name}` : mg.channel_type})`;
 }
 
 /**
@@ -96,6 +181,7 @@ export async function handleCreateAgent(content: Record<string, unknown>, sessio
 export const applyCreateAgent: ApprovalHandler = async ({ session, payload, notify }) => {
   const name = typeof payload.name === 'string' ? payload.name : '';
   const instructions = typeof payload.instructions === 'string' ? payload.instructions : null;
+  const provider = typeof payload.provider === 'string' ? payload.provider : undefined;
 
   if (!name) {
     notify('create_agent approved but the request had no name.');
@@ -109,7 +195,7 @@ export const applyCreateAgent: ApprovalHandler = async ({ session, payload, noti
     return;
   }
 
-  await performCreateAgent(name, instructions, session, sourceGroup, notify);
+  await performCreateAgent(name, instructions, session, sourceGroup, notify, provider);
 };
 
 /**
@@ -126,7 +212,18 @@ async function performCreateAgent(
   session: Session,
   sourceGroup: AgentGroup,
   notify: (text: string) => void,
+  requestedProvider?: string,
 ): Promise<void> {
+  // Re-check readiness at apply time (before any DB write): the operator may
+  // have approved a cross-provider request without installing the provider, or
+  // an install could have been removed between request and approval.
+  if (requestedProvider && !isProviderReady(requestedProvider)) {
+    notify(
+      `Couldn't create "${name}": ${requestedProvider} still isn't installed. Ask an admin to enable it, then request again.`,
+    );
+    return;
+  }
+
   const localName = normalizeName(name);
 
   // Collision in the creator's destination namespace
@@ -163,16 +260,17 @@ async function performCreateAgent(
     created_at: now,
   };
   createAgentGroup(newGroup);
-  // A subagent inherits its creator's provider. Provider is a DB property; the
-  // child is created provider-agnostic, then stamped with the parent's runtime
-  // so a single-provider install (e.g. codex-only, where claude isn't
-  // authenticated) doesn't spawn a child on a runtime it can't reach. The
-  // operator can still flip a child later with `ncl groups config update
-  // --provider`. claude (the built-in default) leaves the column unset.
-  const parentProvider = getContainerConfig(sourceGroup.id)?.provider ?? undefined;
-  initGroupFilesystem(newGroup, { instructions: instructions ?? undefined, provider: parentProvider });
-  if (parentProvider) {
-    updateContainerConfigScalars(newGroup.id, { provider: parentProvider });
+  // Provider is a DB property; the child is created provider-agnostic, then
+  // stamped. An explicit cross-provider request stamps that provider; otherwise
+  // the child inherits the creator's runtime so a single-provider install (e.g.
+  // codex-only, where claude isn't authenticated) doesn't spawn a child on a
+  // runtime it can't reach. The operator can still flip a child later with `ncl
+  // groups config update --provider`. claude (the built-in default) leaves the
+  // column unset — keeping an explicit `claude` request unstamped too.
+  const providerToStamp = requestedProvider ?? getContainerConfig(sourceGroup.id)?.provider ?? undefined;
+  initGroupFilesystem(newGroup, { instructions: instructions ?? undefined, provider: providerToStamp });
+  if (providerToStamp && providerToStamp !== 'claude') {
+    updateContainerConfigScalars(newGroup.id, { provider: providerToStamp });
   }
 
   // Insert bidirectional destination rows (= ACL grants).

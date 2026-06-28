@@ -39,8 +39,19 @@ export const createAgent: McpToolDefinition = {
     inputSchema: {
       type: 'object' as const,
       properties: {
-        name: { type: 'string', description: 'Human-readable name (also becomes your destination name for this agent)' },
-        instructions: { type: 'string', description: 'CLAUDE.md content for the new agent (personality, role, instructions)' },
+        name: {
+          type: 'string',
+          description: 'Human-readable name (also becomes your destination name for this agent)',
+        },
+        instructions: {
+          type: 'string',
+          description: 'CLAUDE.md content for the new agent (personality, role, instructions)',
+        },
+        provider: {
+          type: 'string',
+          description:
+            'Optional. Run the new agent on a different AI provider (e.g. "codex", "opencode") instead of inheriting yours. Cross-provider creation ALWAYS needs human approval, and the provider must already be installed on the host. Omit to inherit your own provider.',
+        },
       },
       required: ['name'],
     },
@@ -49,6 +60,7 @@ export const createAgent: McpToolDefinition = {
     const name = args.name as string;
     if (!name) return err('name is required');
 
+    const provider = typeof args.provider === 'string' && args.provider.trim() ? args.provider.trim() : undefined;
     const requestId = generateId();
     writeMessageOut({
       id: requestId,
@@ -58,11 +70,20 @@ export const createAgent: McpToolDefinition = {
         requestId,
         name,
         instructions: (args.instructions as string) || null,
+        ...(provider ? { provider } : {}),
       }),
     });
 
-    log(`create_agent: ${requestId} → "${name}"`);
-    return ok(`Creating agent "${name}". You will be notified when it is ready.`);
+    log(`create_agent: ${requestId} → "${name}"${provider ? ` (${provider})` : ''}`);
+    // For a cross-provider request the host decides the outcome (create now /
+    // needs approval / provider not installed) and replies with a follow-up.
+    // Don't let the agent assert an outcome here — it doesn't know which path
+    // applies and "may need approval" reads as misleading when it doesn't.
+    return ok(
+      provider
+        ? `Requested agent "${name}" on ${provider}. The system will follow up with the actual result — relay that; don't promise it's created or claim it needs approval.`
+        : `Creating agent "${name}". You will be notified when it is ready.`,
+    );
   },
 };
 

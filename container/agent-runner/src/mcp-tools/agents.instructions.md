@@ -24,3 +24,11 @@ The right frame is: does this agent need its own memory and context that builds 
 ### Writing good `instructions`
 
 Cover: the agent's role, who it takes tasks from (you, by name), how it should report back (on completion only? with milestones for long work?), and any domain-specific rules. Don't restate NanoClaw base behavior — the shared base is already loaded on the agent's end.
+
+### Creating a teammate on a different AI (`provider`)
+
+Pass `provider` (e.g. `"codex"`, `"opencode"`) to run the new agent on a different AI than you. Omit it and the teammate inherits yours.
+
+You don't get to know the outcome when you make the request — the host decides and replies with a follow-up: the agent is created right away, an admin needs to approve it first, or the provider isn't installed and an admin has to enable it. The three paths look different to different callers, so **don't predict which one applies**. In particular, don't tell the user "request submitted, it'll spin up" or "this needs approval" — you don't know that yet, and promising approval that never happens is misleading.
+
+So: a new cross-provider teammate is a real action — confirm with the user before requesting. Make the request. Then **relay the system's follow-up message** as the actual result. If it says the provider isn't installed, tell the user an admin needs to enable it first — in plain terms ("an admin would need to set up Codex first"), not "run `/add-codex`."

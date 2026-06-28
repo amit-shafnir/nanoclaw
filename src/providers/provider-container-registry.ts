@@ -106,3 +106,15 @@ export function providerProvidesAgentSurfaces(name: string | null | undefined): 
 export function listProviderContainerConfigNames(): string[] {
   return [...registry.keys()];
 }
+
+// `claude` registers a host config only when `.env` sets ANTHROPIC_BASE_URL, and
+// `mock` never registers host-side — yet a child can always boot on either. So
+// readiness is "registered OR built-in", not "registered". (Ollama keeps the
+// `claude` provider name, pointing it at a local base URL, so it's covered too.)
+const ALWAYS_READY_PROVIDERS = new Set(['claude', 'mock']);
+
+/** True if a child agent group can boot on this provider right now (host-side setup present). */
+export function isProviderReady(provider: string): boolean {
+  const name = provider.toLowerCase();
+  return ALWAYS_READY_PROVIDERS.has(name) || listProviderContainerConfigNames().includes(name);
+}
