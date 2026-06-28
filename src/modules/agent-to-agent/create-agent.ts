@@ -16,7 +16,11 @@ import path from 'path';
 
 import { GROUPS_DIR } from '../../config.js';
 import { createAgentGroup, getAgentGroup, getAgentGroupByFolder } from '../../db/agent-groups.js';
-import { getContainerConfig, updateContainerConfigScalars } from '../../db/container-configs.js';
+import {
+  getContainerConfig,
+  updateContainerConfigJson,
+  updateContainerConfigScalars,
+} from '../../db/container-configs.js';
 import { getSession } from '../../db/sessions.js';
 import { wakeContainer } from '../../container-runner.js';
 import { initGroupFilesystem } from '../../group-init.js';
@@ -163,16 +167,33 @@ async function performCreateAgent(
     created_at: now,
   };
   createAgentGroup(newGroup);
-  // A subagent inherits its creator's provider. Provider is a DB property; the
-  // child is created provider-agnostic, then stamped with the parent's runtime
-  // so a single-provider install (e.g. codex-only, where claude isn't
-  // authenticated) doesn't spawn a child on a runtime it can't reach. The
-  // operator can still flip a child later with `ncl groups config update
-  // --provider`. claude (the built-in default) leaves the column unset.
-  const parentProvider = getContainerConfig(sourceGroup.id)?.provider ?? undefined;
-  initGroupFilesystem(newGroup, { instructions: instructions ?? undefined, provider: parentProvider });
-  if (parentProvider) {
-    updateContainerConfigScalars(newGroup.id, { provider: parentProvider });
+
+  // A subagent inherits its creator's runtime BACKEND so it reaches the same
+  // model the parent uses — provider + model + env (ANTHROPIC_BASE_URL/token) +
+  // blocked_hosts. Without model+env, a child of a local-Ollama agent
+  // (provider=claude, ANTHROPIC_BASE_URL->Ollama) would spawn pointed at the
+  // cloud Anthropic API: the runtime its parent was explicitly steered away from.
+  // Inheritance (not an install-wide default) keeps a mixed Claude+Ollama install
+  // correct — each parent's children land on the parent's backend. Operators can
+  // still retune a child with `ncl groups config update`.
+  //
+  // Deliberately NOT inherited: cli_scope (a child must never inherit 'global'
+  // ncl access — privilege escalation) and capability fields
+  // (skills/packages/mcp_servers/mounts), which describe what a child can DO, not
+  // which backend it talks to.
+  const parentCfg = getContainerConfig(sourceGroup.id);
+  const provider = parentCfg?.provider ?? undefined;
+  initGroupFilesystem(newGroup, { instructions: instructions ?? undefined, provider });
+  // initGroupFilesystem ran ensureContainerConfig(newGroup.id); the row exists.
+  const model = parentCfg?.model ?? undefined;
+  if (provider !== undefined || model !== undefined) {
+    updateContainerConfigScalars(newGroup.id, { provider, model });
+  }
+  if (parentCfg?.env && parentCfg.env !== '{}') {
+    updateContainerConfigJson(newGroup.id, 'env', JSON.parse(parentCfg.env));
+  }
+  if (parentCfg?.blocked_hosts && parentCfg.blocked_hosts !== '[]') {
+    updateContainerConfigJson(newGroup.id, 'blocked_hosts', JSON.parse(parentCfg.blocked_hosts));
   }
 
   // Insert bidirectional destination rows (= ACL grants).

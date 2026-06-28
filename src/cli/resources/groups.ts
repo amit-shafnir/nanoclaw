@@ -28,6 +28,8 @@ function presentConfig(row: ContainerConfigRow): Record<string, unknown> {
     packages_npm: JSON.parse(row.packages_npm),
     additional_mounts: JSON.parse(row.additional_mounts),
     cli_scope: row.cli_scope,
+    env: JSON.parse(row.env),
+    blocked_hosts: JSON.parse(row.blocked_hosts),
     updated_at: row.updated_at,
   };
 }
@@ -367,6 +369,94 @@ registerResource({
           removed: { apt: apt || null, npm: npm || null },
           note: 'Image rebuild required for package changes to take effect.',
         };
+      },
+    },
+    'config set-env': {
+      access: 'approval',
+      description:
+        'Set a per-group container env var. Requires `ncl groups restart` to take effect. ' +
+        'Use --id <group-id> --key <KEY> --value <VALUE>. Emitted as `docker run -e KEY=VALUE` after the ' +
+        'OneCLI apply, so it overrides install-wide defaults — e.g. point ANTHROPIC_BASE_URL at a local Ollama endpoint.',
+      handler: async (args) => {
+        const id = args.id as string;
+        if (!id) throw new Error('--id is required');
+        const key = args.key as string;
+        if (!key) throw new Error('--key is required');
+        if (args.value === undefined) throw new Error('--value is required');
+        const value = String(args.value);
+
+        const row = getContainerConfig(id);
+        if (!row) throw new Error(`No container config for group: ${id}`);
+
+        const env = JSON.parse(row.env) as Record<string, string>;
+        env[key] = value;
+        updateContainerConfigJson(id, 'env', env);
+
+        return { set: { [key]: value }, env };
+      },
+    },
+    'config unset-env': {
+      access: 'approval',
+      description:
+        'Remove a per-group container env var. Requires `ncl groups restart` to take effect. ' +
+        'Use --id <group-id> --key <KEY>.',
+      handler: async (args) => {
+        const id = args.id as string;
+        if (!id) throw new Error('--id is required');
+        const key = args.key as string;
+        if (!key) throw new Error('--key is required');
+
+        const row = getContainerConfig(id);
+        if (!row) throw new Error(`No container config for group: ${id}`);
+
+        const env = JSON.parse(row.env) as Record<string, string>;
+        if (!(key in env)) throw new Error(`Env var "${key}" not set`);
+        delete env[key];
+        updateContainerConfigJson(id, 'env', env);
+
+        return { removed: key, env };
+      },
+    },
+    'config add-blocked-host': {
+      access: 'approval',
+      description:
+        'Block a hostname for a group — resolved to 0.0.0.0 via `--add-host`. Requires `ncl groups restart` to take effect. ' +
+        'Use --id <group-id> --host <hostname>. E.g. block api.anthropic.com on a local-only group.',
+      handler: async (args) => {
+        const id = args.id as string;
+        if (!id) throw new Error('--id is required');
+        const host = args.host as string;
+        if (!host) throw new Error('--host is required');
+
+        const row = getContainerConfig(id);
+        if (!row) throw new Error(`No container config for group: ${id}`);
+
+        const hosts = JSON.parse(row.blocked_hosts) as string[];
+        if (!hosts.includes(host)) hosts.push(host);
+        updateContainerConfigJson(id, 'blocked_hosts', hosts);
+
+        return { blocked: host, blocked_hosts: hosts };
+      },
+    },
+    'config remove-blocked-host': {
+      access: 'approval',
+      description:
+        'Unblock a hostname for a group. Requires `ncl groups restart` to take effect. ' +
+        'Use --id <group-id> --host <hostname>.',
+      handler: async (args) => {
+        const id = args.id as string;
+        if (!id) throw new Error('--id is required');
+        const host = args.host as string;
+        if (!host) throw new Error('--host is required');
+
+        const row = getContainerConfig(id);
+        if (!row) throw new Error(`No container config for group: ${id}`);
+
+        const hosts = JSON.parse(row.blocked_hosts) as string[];
+        const filtered = hosts.filter((h) => h !== host);
+        updateContainerConfigJson(id, 'blocked_hosts', filtered);
+
+        return { unblocked: host, blocked_hosts: filtered };
       },
     },
   },
