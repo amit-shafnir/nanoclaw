@@ -17,6 +17,7 @@ const mockGetContainerConfig = vi.fn();
 const mockCreateAgentGroup = vi.fn();
 const mockInitGroupFilesystem = vi.fn();
 const mockUpdateScalars = vi.fn();
+const mockUpdateJson = vi.fn();
 const mockWriteDestinations = vi.fn();
 const mockNotifyWrite = vi.fn();
 
@@ -27,6 +28,7 @@ vi.mock('../../db/container-configs.js', () => ({
   getContainerConfig: (...a: unknown[]) => mockGetContainerConfig(...a),
   ensureContainerConfig: () => {},
   updateContainerConfigScalars: (...a: unknown[]) => mockUpdateScalars(...a),
+  updateContainerConfigJson: (...a: unknown[]) => mockUpdateJson(...a),
 }));
 vi.mock('../../db/agent-groups.js', () => ({
   getAgentGroup: (id: string) => ({ id, name: id.toUpperCase(), folder: id, agent_provider: null, created_at: '' }),
@@ -91,6 +93,34 @@ describe('handleCreateAgent — scope-based authorization', () => {
       expect.objectContaining({ provider: 'codex' }),
     );
     expect(mockUpdateScalars).toHaveBeenCalledWith(expect.any(String), { provider: 'codex' });
+  });
+
+  it('child inherits the full runtime backend (ollama parent → ollama child)', async () => {
+    // The bug: a local-Ollama parent has provider=claude (null) but routes via
+    // model + env (ANTHROPIC_BASE_URL/token) + blocked_hosts. Inheriting only
+    // provider drops all of that, so the child spawns on the cloud Anthropic API.
+    mockGetContainerConfig.mockReturnValue({
+      cli_scope: 'global',
+      provider: null,
+      model: 'gemma4',
+      env: '{"ANTHROPIC_BASE_URL":"http://host.docker.internal:11434","ANTHROPIC_AUTH_TOKEN":"placeholder"}',
+      blocked_hosts: '["api.anthropic.com"]',
+    });
+
+    await handleCreateAgent({ name: 'helper' }, SESSION);
+
+    // model carried — old code never set it (the bug).
+    expect(mockUpdateScalars).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ model: 'gemma4' }));
+    // env + blocked_hosts carried as parsed JSON (signature: id, column, value).
+    expect(mockUpdateJson).toHaveBeenCalledWith(expect.any(String), 'env', {
+      ANTHROPIC_BASE_URL: 'http://host.docker.internal:11434',
+      ANTHROPIC_AUTH_TOKEN: 'placeholder',
+    });
+    expect(mockUpdateJson).toHaveBeenCalledWith(expect.any(String), 'blocked_hosts', ['api.anthropic.com']);
+    // Boundary guard: cli_scope is NEVER inherited (no privilege escalation).
+    for (const call of mockUpdateScalars.mock.calls) {
+      expect(call[1]).not.toHaveProperty('cli_scope');
+    }
   });
 
   it('claude creator leaves the child provider unset (built-in default)', async () => {
