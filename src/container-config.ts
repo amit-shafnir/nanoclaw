@@ -43,6 +43,10 @@ export interface ContainerConfig {
   maxMessagesPerPrompt?: number;
   model?: string;
   effort?: string;
+  /** Per-group env overrides, emitted as `docker run -e KEY=VAL` after the OneCLI apply. */
+  env?: Record<string, string>;
+  /** Hostnames nulled via `--add-host HOST:0.0.0.0` (e.g. block api.anthropic.com on a local-only group). */
+  blockedHosts?: string[];
 }
 
 /** Build a `ContainerConfig` from a DB row + agent group identity. */
@@ -63,6 +67,8 @@ export function configFromDb(row: ContainerConfigRow, group: AgentGroup): Contai
     maxMessagesPerPrompt: row.max_messages_per_prompt ?? undefined,
     model: row.model ?? undefined,
     effort: row.effort ?? undefined,
+    env: JSON.parse(row.env) as Record<string, string>,
+    blockedHosts: JSON.parse(row.blocked_hosts) as string[],
   };
 }
 

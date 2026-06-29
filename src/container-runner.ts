@@ -425,6 +425,27 @@ function selectedSkillNames(containerConfig: import('./container-config.js').Con
     : [];
 }
 
+/**
+ * Docker args for a group's per-group env overrides and blocked hosts.
+ *
+ * Emitted AFTER the OneCLI gateway apply so the group's own values win — Docker
+ * honors the last `-e KEY=VAL` for a repeated key, and this lets one group point
+ * `ANTHROPIC_BASE_URL` at a local Ollama endpoint independently of the
+ * install-wide `.env`. `blockedHosts` map to `--add-host HOST:0.0.0.0`, routing
+ * the name to an unroutable address (belt-and-suspenders against accidental
+ * egress, e.g. blocking api.anthropic.com on a local-only group).
+ */
+export function buildPerGroupOverrideArgs(env: Record<string, string> = {}, blockedHosts: string[] = []): string[] {
+  const args: string[] = [];
+  for (const [key, value] of Object.entries(env)) {
+    args.push('-e', `${key}=${value}`);
+  }
+  for (const host of blockedHosts) {
+    args.push('--add-host', `${host}:0.0.0.0`);
+  }
+  return args;
+}
+
 async function buildContainerArgs(
   mounts: VolumeMount[],
   containerName: string,
@@ -497,6 +518,11 @@ async function buildContainerArgs(
     throw new Error('OneCLI gateway not applied — refusing to spawn container without credentials');
   }
   log.info('OneCLI gateway applied', { containerName });
+
+  // Per-group env overrides + blocked hosts, AFTER the OneCLI apply so the
+  // group's own values win (Docker honors the last -e for a repeated key) —
+  // e.g. a group pointing ANTHROPIC_BASE_URL at a local Ollama endpoint.
+  args.push(...buildPerGroupOverrideArgs(containerConfig.env, containerConfig.blockedHosts));
 
   // Override entrypoint: run v2 entry point directly via Bun (no tsc, no stdin).
   args.push('--entrypoint', 'bash');

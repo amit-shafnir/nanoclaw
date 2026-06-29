@@ -47,21 +47,23 @@ Model selection considerations for Apple Silicon:
 
 | Model | Size | Quality | Speed (M4 Pro) |
 |-------|------|---------|----------------|
-| `gemma4:latest` | 12B | Good general-purpose | Fast |
+| `gemma4:latest` | 8.0B | Good general-purpose | Fast |
 | `qwen3-coder:latest` | 32B | Excellent for coding tasks | Moderate |
 | `llama3.2:latest` | 3B | Basic | Very fast |
 
 The agent uses tool calls extensively (read/write files, shell commands). Models that support tool use reliably work best. Gemma 4 and Qwen 3 Coder both handle structured tool calls well.
 
-## Allowing Prompt Caching (filter the cache-busting hash)
+## Per-turn latency: keep the prompt front stable
 
-Out of the box this path is slow — every reply re-reads the whole multi-thousand-token system prompt from scratch, even for a one-word answer. Ollama has a prompt cache that should skip that repeated work, but on this path it never kicks in.
+Out of the box this path gets **slower every message** — each reply re-reads the whole (growing) multi-thousand-token prompt from scratch, even for a one-word answer. Ollama has a KV prefix cache that should skip that repeated work, but on this path it never kicks in.
 
-**Cause.** The Claude Agent SDK adds a per-request hash to the front of every prompt — `x-anthropic-billing-header: ...; cch=<hash>;`. It changes on every request, and Ollama's cache only reuses a prompt whose start is unchanged. So that one shifting value at the front makes Ollama treat every prompt as new and re-read all of it. (Ollama ignores the hash itself, so filtering it has no effect on output.)
+**Cause.** The bundled `claude` binary stamps a billing line — `x-anthropic-billing-header: ...; cch=<nonce>; ...cc_version=<ver>` — as the **first** system block of every request. Both the `cch` nonce and the `cc_version` suffix rotate every turn. Ollama's prefix cache is anchored at token 0, so a value that changes at the very front makes Ollama treat the entire prompt as new and re-prefill all of it. (Ollama ignores the line itself, so removing it doesn't change output.)
 
-**Fix.** Run a tiny proxy between the container and Ollama that filters the hash out (pins `cch=<hash>` to a constant). The start of the prompt is now stable, so the cache kicks in and only the new message gets processed. In our setup — a 31B model on Apple Silicon — follow-up replies dropped from ~80s to ~4s; your numbers will vary with model size and hardware. Output is unchanged, since Ollama ignores the value anyway.
+**Fix.** Set `CLAUDE_CODE_ATTRIBUTION_HEADER=off` in the agent group's `container.json` `env` block — the `/add-ollama-provider` skill and the `ollama launch nanoclaw` flow both do this. The binary then omits the billing line entirely, the prompt front is static, and the cache holds across turns. Follow-up replies drop to a fraction of a second; turn-1 still pays a one-time cold prefill (the launcher primes it with a throwaway turn at warmup). No proxy, no provider code. Cutting the system prompt or tool schemas instead does *nothing* for steady-state latency — the rotating front is the whole problem.
 
-Point the agent group's `ANTHROPIC_BASE_URL` at the proxy instead of Ollama directly (everything else from the sections above is unchanged):
+> `CLAUDE_CODE_ATTRIBUTION_HEADER` is an undocumented binary env var. If a binary bump ignores it (the billing line reappears at the front), fall back to the proxy below — and re-check the var name against the request body.
+
+**Fallback — strip the line in a proxy.** If the env var stops working, run a tiny proxy between the container and Ollama that pins the **whole** billing line (both `cch` and `cc_version`) to a constant. Point the agent group's `ANTHROPIC_BASE_URL` at the proxy instead of Ollama directly:
 
 ```
 ANTHROPIC_BASE_URL=http://host.docker.internal:11999   # the proxy
@@ -71,8 +73,10 @@ ANTHROPIC_BASE_URL=http://host.docker.internal:11999   # the proxy
 The proxy is ~40 lines of dependency-free Node:
 
 ```js
-// ollama-cch-proxy.mjs — normalize the SDK's per-request cch nonce so Ollama's
-// prefix cache survives across turns. Listens on :11999, forwards to Ollama.
+// ollama-billing-proxy.mjs — neutralize the binary's per-turn billing line so
+// Ollama's prefix cache survives across turns. Listens on :11999, forwards to
+// Ollama. Pinning only `cch=` is NOT enough — the `cc_version` suffix rotates
+// too, so the whole `x-anthropic-billing-header:` value must be pinned.
 import http from 'node:http';
 
 const TARGET_HOST = process.env.OLLAMA_HOST || '127.0.0.1';
@@ -85,7 +89,10 @@ const server = http.createServer((req, res) => {
   req.on('end', () => {
     let body = Buffer.concat(chunks);
     if (req.method === 'POST' && body.length) {
-      body = Buffer.from(body.toString('utf8').replace(/cch=[0-9a-f]+;/g, 'cch=00000;'), 'utf8');
+      body = Buffer.from(
+        body.toString('utf8').replace(/x-anthropic-billing-header:[^"\n]*/g, 'x-anthropic-billing-header: pinned'),
+        'utf8',
+      );
     }
     const headers = { ...req.headers, host: `${TARGET_HOST}:${TARGET_PORT}`, 'content-length': String(body.length) };
     const proxyReq = http.request(
@@ -125,7 +132,7 @@ loginctl enable-linger "$USER"   # so it runs without an active login session
 
 On macOS use a `launchd` user agent (`~/Library/LaunchAgents/`) running the same script.
 
-**Scope.** This only affects the Claude-Code-CLI → Ollama path described here. Codex and OpenCode don't use the Claude Agent SDK, so they never emit the `cch` hash and get prompt caching for free.
+**Scope.** This only affects the Claude-Code-CLI → Ollama path described here. Codex and OpenCode don't use the Claude Agent SDK, so they never emit the billing line and get prompt caching for free.
 
 ## What Changes at the Code Level
 
