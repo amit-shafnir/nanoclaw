@@ -41,12 +41,13 @@ describe('readGroupPersona', () => {
     expect(readGroupPersona(TMP)).toBe('You are an SDR agent.\n\nBehavior instructions.\n\nTools instructions.');
   });
 
-  it('does not follow a symlink', () => {
+  it('skips a symlink without dropping valid prepend files', () => {
     const target = path.join(TMP, 'outside.md');
     fs.writeFileSync(target, 'host-only content\n');
     fs.symlinkSync(target, path.join(TMP, PERSONA_PREPEND_FILE));
+    fs.writeFileSync(path.join(TMP, 'tools.prepend.md'), 'Safe tools.\n');
 
-    expect(readGroupPersona(TMP)).toBeNull();
+    expect(readGroupPersona(TMP)).toBe('Safe tools.');
     expect(log.warn).toHaveBeenCalledWith(
       'Could not read group standing instructions; omitting prepend file',
       expect.objectContaining({ file: path.join(TMP, PERSONA_PREPEND_FILE) }),
