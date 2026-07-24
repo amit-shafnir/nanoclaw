@@ -41,6 +41,8 @@ Notes:
 - **Every Markdown file directly beside `instructions.md` is prepended.**
   `<name>.md` becomes `<name>.prepend.md` in the agent. `instructions.md` is
   composed first; additional prepend files follow alphabetically.
+- **Use only regular files and real directories.** Symlinks and special files
+  are rejected before any template content is read.
 - **Extra context is copied preserving its layout relative to `instructions.md`**
   (`context/additional_context/faq.md` → `additional_context/faq.md` in the
   agent's workspace). Nothing is referenced automatically — a prepended file

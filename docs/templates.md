@@ -74,6 +74,8 @@ Notes:
 - **No provider, model, effort, or packages in a template.** Those are set on
   the agent later via `ncl groups config update`. The runtime defaults to the
   install's configured provider.
+- **Template trees may contain only regular files and real directories.**
+  Symlinks and special files are rejected before any template content is read.
 - **Keep all top-level context files focused (under ~200 lines combined).** They're
   always in the agent's prompt, and some providers cap that doc (Codex ~32 KB),
   so over-long instructions get truncated. Put bulk material in `skills/` or
