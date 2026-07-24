@@ -38,6 +38,9 @@ standing brief and marks the folder as a template.
 
 Notes:
 
+- **Install only templates you trust.** Standing instructions, MCP launch
+  commands, skills, and scheduled-task prompts become part of the agent's
+  behavior.
 - **Every Markdown file directly beside `instructions.md` is prepended.**
   `<name>.md` becomes `<name>.prepend.md` in the agent. `instructions.md` is
   composed first; additional prepend files follow alphabetically.

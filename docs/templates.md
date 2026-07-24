@@ -71,6 +71,9 @@ is optional and defaults sensibly:
 
 Notes:
 
+- **Install only templates you trust.** A template supplies standing
+  instructions, MCP launch commands, skills, and scheduled-task prompts that
+  become part of the agent's behavior.
 - **No provider, model, effort, or packages in a template.** Those are set on
   the agent later via `ncl groups config update`. The runtime defaults to the
   install's configured provider.
