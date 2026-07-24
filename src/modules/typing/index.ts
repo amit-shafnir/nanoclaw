@@ -76,12 +76,16 @@ function shouldRefreshTyping(
   try {
     const db = openOutboundDb(agentGroupId, sessionId);
     try {
-      return getProcessingClaims(db).length > 0 || (withinGrace && !hasProcessingAck(db, messageId));
+      return (
+        getProcessingClaims(db).some((claim) => claim.message_id === messageId) ||
+        (withinGrace && !hasProcessingAck(db, messageId))
+      );
     } finally {
       db.close();
     }
   } catch {
-    return withinGrace;
+    // A transient read failure is not evidence that the turn ended.
+    return true;
   }
 }
 

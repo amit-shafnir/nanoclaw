@@ -173,4 +173,33 @@ describe('startTypingRefresh — turn lifecycle', () => {
     await vi.advanceTimersByTimeAsync(4_500);
     expect(calls).toHaveLength(1);
   });
+
+  it('ignores processing claims from a different message', async () => {
+    initSessionFolder('ag-1', 'sess-1');
+    const db = openOutboundDbRw('ag-1', 'sess-1');
+    const insert = db.prepare('INSERT INTO processing_ack (message_id, status, status_changed) VALUES (?, ?, ?)');
+    insert.run('message-1', 'completed', new Date().toISOString());
+    insert.run('message-2', 'processing', new Date().toISOString());
+    db.close();
+
+    const calls = captureAdapter();
+    startTypingRefresh('sess-1', 'ag-1', 'message-1', 'telegram', 'tg:99', null, 'telegram');
+
+    await vi.advanceTimersByTimeAsync(4_500);
+    expect(calls).toHaveLength(1);
+  });
+
+  it('retries after processing state cannot be read', async () => {
+    initSessionFolder('ag-1', 'sess-1');
+    const calls = captureAdapter();
+    startTypingRefresh('sess-1', 'ag-1', 'message-1', 'telegram', 'tg:99', null, 'telegram');
+    fs.rmSync('/tmp/nanoclaw-test-typing', { recursive: true, force: true });
+
+    await vi.advanceTimersByTimeAsync(20_500);
+    expect(calls).toHaveLength(6);
+
+    initSessionFolder('ag-1', 'sess-1');
+    await vi.advanceTimersByTimeAsync(4_000);
+    expect(calls).toHaveLength(6);
+  });
 });

@@ -489,7 +489,12 @@ export async function processQuery(
           pollInFlight = false;
         }
       }
-    })();
+    })().catch((err) => {
+      log(`Follow-up cleanup failed: ${err instanceof Error ? err.message : String(err)}. Exiting for retry.`);
+      done = true;
+      clearInterval(pollHandle);
+      setTimeout(() => process.exit(75), 100);
+    });
   }, ACTIVE_POLL_INTERVAL_MS);
 
   try {
@@ -576,9 +581,9 @@ export async function processQuery(
     });
     throw err;
   } finally {
-    markCompleted(pendingTurns.flatMap((turn) => turn.messageIds));
     done = true;
     clearInterval(pollHandle);
+    markCompleted(pendingTurns.flatMap((turn) => turn.messageIds));
   }
 
   return { continuation: queryContinuation };
