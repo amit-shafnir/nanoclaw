@@ -3,8 +3,8 @@
 A **template** is a reusable directory you stamp into a working agent group: it
 carries the agent's standing instructions, its MCP tool servers, its skills,
 and optional recurring tasks, but **no secrets and no provider**. Point `ncl`
-at one and you get a configured agent in seconds; you choose the
-runtime/provider separately.
+or the setup wizard at one and you get a configured agent in seconds; you
+choose the runtime/provider separately.
 
 Templates use the vendor-neutral
 [Agent Plugins 1.0.0](https://agent-plugins.org) directory format. The
@@ -22,12 +22,12 @@ consequences:
   empty and the group is named after the folder.
 
 Templates are purely additive and require no DB migration. **Templates
-are resolved only from a local directory**: `templates/` at the
+are stamped only from a local directory**: `templates/` at the
 project root by default (committed but shipped empty), or whatever
 `NANOCLAW_TEMPLATES_DIR` points at (a local path only). The public registry
 ([`nanocoai/nanoclaw-templates`](https://github.com/nanocoai/nanoclaw-templates))
-is a manual copy source — clone or download it yourself and copy the chosen
-template into your local `templates/` before stamping.
+is a copy source: setup can fetch a chosen template into that local directory,
+or you can populate it yourself.
 
 > **Migrating from the pre-plugin layout?** The old format (a bare
 > `context/instructions.md` marker, `.mcp.json`) is no longer read; stamping
@@ -38,7 +38,26 @@ template into your local `templates/` before stamping.
 
 ## Using a template
 
-**Via the CLI:**
+**During installation:** run `bash nanoclaw.sh`. Before the sandbox build, setup
+offers a fresh agent, the public template library, or templates already in your
+local `templates/` directory. A library choice is copied locally first, then
+setup stamps the agent through the same `ncl groups create --template` command
+used below. The agent is created even when channel setup is skipped or cannot
+finish wiring yet. When a channel is ready, setup wires that existing agent and
+sends the welcome message. The selected provider remains separate from the
+template.
+
+If an agent with the selected name already exists, setup asks whether to replace
+it. **Yes** installs a new agent with the template's instructions, MCP servers,
+skills, and paused tasks, then removes the previous agent. **No** cancels only
+the template installation and continues setup without it.
+
+Advanced setup can preset a local ref with **First-agent template**. The same
+setting is available as `--template-path sales/sdr` or
+`NANOCLAW_TEMPLATE_PATH=sales/sdr`. Existing installs do not see the template
+picker automatically, but an explicit template path is still installed.
+
+**Anytime, via the CLI:**
 
 ```bash
 ncl groups create --template sales/sdr --name "SDR Agent"
@@ -62,8 +81,8 @@ its manifest `name` is just `sdr`.
 
 For safety the ref must stay inside the templates directory: absolute paths, a
 leading `~`, and `../` escapes are rejected. There is no `--source`, no git URL,
-and no remote fetch at `ncl` time. Populate `templates/` first (by hand, e.g.
-copying from the public registry), then stamp.
+and no remote fetch at `ncl` time. Populate `templates/` first by hand or with
+setup's library picker, then stamp.
 
 `NANOCLAW_TEMPLATES_DIR` may point the library at another **local** directory; it
 is never a URL and never changes at runtime.

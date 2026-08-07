@@ -21,12 +21,15 @@ vi.mock('../lib/bright-select.js', async (importActual) => {
   return { ...actual, brightSelect: vi.fn(async () => bs.answers.shift() ?? 'continue') };
 });
 
+afterEach(() => delete process.env.NANOCLAW_TEMPLATE_AGENT_ID);
+
 // Drives the real add-slack skill through the adapter with every side effect
 // injected (no real ncl/git/clack/init-first-agent): confirms it runs the skill
 // (install + creds + resolve), reads the resolved owner_handle + platform_id from
 // the result, and hands them to the shared wire with a composed user-id.
 describe('runChannelSkill adapter (Option A)', () => {
   it('resolves via the skill, then wires through init-first-agent', async () => {
+    process.env.NANOCLAW_TEMPLATE_AGENT_ID = 'ag-template';
     const root = mkdtempSync(join(tmpdir(), 'rcs-'));
     mkdirSync(join(root, 'src/channels'), { recursive: true });
     writeFileSync(join(root, 'src/channels/index.ts'), '// barrel\n');
@@ -70,6 +73,7 @@ describe('runChannelSkill adapter (Option A)', () => {
       displayName: 'Bob Smith',
       agentName: 'Nano',
       role: 'owner',
+      agentGroupId: 'ag-template',
     });
     // the adapter no longer emits any ncl wiring itself — that's init-first-agent's job
     expect(cmds.some((c) => c.startsWith('ncl '))).toBe(false);

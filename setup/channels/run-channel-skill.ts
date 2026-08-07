@@ -8,9 +8,9 @@
  *     `platform_id` (e.g. Slack `conversations.open`). The engine surfaces those
  *     resolved values in `ApplyResult.vars`.
  *   - This flow owns the shared part: the operator's agent name + role (the
- *     polish), and the wire itself — `scripts/init-first-agent.ts`, which creates
- *     the agent group, grants the owner role (+ cli_scope=global), creates the
- *     messaging group + wiring, and sends the `/welcome` system instruction.
+ *     polish), and the wire itself — `scripts/init-first-agent.ts`, which resolves
+ *     or creates the agent group, grants the owner role (+ cli_scope=global),
+ *     creates the messaging group + wiring, and sends the `/welcome` system instruction.
  *
  * So the wire lives in exactly one place (init-first-agent) and is never
  * duplicated across channel skills.
@@ -35,6 +35,7 @@ interface WireArgs {
   displayName: string;
   agentName: string;
   role: OperatorRole;
+  agentGroupId?: string;
   /** Explicit DM engage regex (e.g. WhatsApp shared-mode "@<name> only" self-chat). */
   engagePattern?: string;
 }
@@ -65,6 +66,7 @@ async function initFirstAgent(args: WireArgs): Promise<boolean> {
       '--display-name', args.displayName,
       '--agent-name', args.agentName,
       '--role', args.role,
+      ...(args.agentGroupId ? ['--agent-group-id', args.agentGroupId] : []),
       ...(args.engagePattern ? ['--engage-pattern', args.engagePattern] : []),
     ],
     { running: `Wiring ${args.agentName} to your ${args.channel} DMs…`, done: 'Agent wired.' },
@@ -216,6 +218,7 @@ export async function runChannelSkill(
     displayName,
     agentName,
     role: role!,
+    agentGroupId: process.env.NANOCLAW_TEMPLATE_AGENT_ID?.trim() || undefined,
     engagePattern: res.vars.engage_pattern || undefined,
   });
   if (!ok) {
