@@ -269,32 +269,29 @@ describe('runCodexInstallCheck', () => {
     expect(driver.logs).toEqual([]);
   });
 
-  it('terminates NDJSON setup when the Codex payload is incomplete', async () => {
+  it('warns and continues in NDJSON when the Codex payload is incomplete', async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nanoclaw-codex-install-check-'));
     const previousCwd = process.cwd();
     const stdout = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
     const driver = new FakeDriver('ndjson');
-    let failure: unknown;
     try {
       process.chdir(root);
-      try {
-        await runCodexInstallCheck(driver);
-      } catch (error) {
-        failure = error;
-      }
+      await runCodexInstallCheck(driver);
     } finally {
       process.chdir(previousCwd);
       fs.rmSync(root, { recursive: true, force: true });
       stdout.mockRestore();
     }
 
-    expect(failure).toEqual(new Error('driver error: codex_install_incomplete'));
     expect(stdout).not.toHaveBeenCalled();
     expect(driver.progressEvents).toEqual([
       { stepId: 'codex-install', state: 'running', label: 'Checking the Codex provider install' },
       { stepId: 'codex-install', state: 'failed' },
     ]);
-    expect(driver.logs).toEqual([]);
+    expect(driver.logs).toHaveLength(1);
+    expect(driver.logs[0]).toMatchObject({ level: 'warn' });
+    expect(driver.logs[0]?.message).toContain('The Codex provider is not fully installed');
+    expect(driver.logs[0]?.message).toContain('Setup will continue');
   });
 });
 

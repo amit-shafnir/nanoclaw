@@ -718,18 +718,11 @@ export async function runCodexInstallCheck(driver: SetupDriver): Promise<void> {
   setupLog.step('codex-install', 'failed', 0, { PROBLEMS: problems.join('; ') });
   if (driver.mode === 'ndjson') {
     driver.progress('codex-install', 'failed');
-    driver.error(
-      'codex_install_incomplete',
-      `The Codex provider is not fully installed: ${problems.join('; ')}`,
-      [
-        {
-          kind: 'manual',
-          title: 'Finish the Codex provider install',
-          instructions: ['Run the /add-codex skill with your coding agent, then rerun setup.'],
-        },
-      ],
-      'codex-install',
+    driver.log(
+      'warn',
+      `The Codex provider is not fully installed: ${problems.join('; ')}. Run the /add-codex skill with your coding agent to finish it. Setup will continue; Codex groups will work once the install completes.`,
     );
+    return;
   }
 
   p.log.warn(brandBody('The Codex provider is not fully installed:'));
