@@ -32,9 +32,11 @@ export interface McpStdioServerConfig {
   env?: Record<string, string>;
   /**
    * Working directory in the Agent Plugins fixed forms (./p, ${PLUGIN_ROOT}[/p],
-   * ${PLUGIN_DATA}[/p]). Validated here but never persisted today: the Claude
+   * ${PLUGIN_DATA}[/p]). Validated here, but no runtime consumes it: the Claude
    * Agent SDK's stdio config takes no cwd, so the plugin reader skips
-   * declared-cwd servers instead of mis-launching them.
+   * declared-cwd servers instead of mis-launching them. No CLI flag or self-mod
+   * tool param exposes it; a raw payload that carries one is rendered on the
+   * approval card.
    */
   cwd?: string;
   /**

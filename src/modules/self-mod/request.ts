@@ -211,6 +211,11 @@ export async function requestAddMcpServerHold(content: Record<string, unknown>, 
       `args: ${escapeInvisibles(JSON.stringify(displayArgs))}`,
       `env: ${escapeInvisibles(JSON.stringify(displayEnv))}`,
     ];
+    // Rare (no CLI flag or tool param exposes it), but a raw payload can
+    // carry cwd — the approver must never sign a field the card hides.
+    if (serverConfig.cwd !== undefined) {
+      fields.push(`cwd: ${escapeInvisibles(JSON.stringify(serverConfig.cwd))}`);
+    }
   }
   if (serverConfig.instructions !== undefined) {
     fields.push(`instructions: ${escapeInvisibles(JSON.stringify(serverConfig.instructions))}`);

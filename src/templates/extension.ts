@@ -64,9 +64,13 @@ export function readNanoclawExtension(
   const extDir = path.join(pluginDir, NANOCLAW_EXTENSION_NS);
   const contextDir = path.join(extDir, 'context');
   const instructionsFile = path.join(contextDir, 'instructions.md');
-  const instructions = fs.existsSync(instructionsFile)
-    ? fs.readFileSync(instructionsFile, 'utf-8').trimEnd()
-    : undefined;
+  let instructions: string | undefined;
+  if (fs.existsSync(instructionsFile)) {
+    if (!fs.lstatSync(instructionsFile).isFile()) {
+      throw new Error(`${NANOCLAW_EXTENSION_NS}/context/instructions.md must be a regular file`);
+    }
+    instructions = fs.readFileSync(instructionsFile, 'utf-8').trimEnd();
+  }
 
   return {
     ...(agentName === undefined ? {} : { agentName }),

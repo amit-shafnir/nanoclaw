@@ -43,7 +43,19 @@ describe('walkPluginDir', () => {
 
   it(`rejects more than ${MAX_PLUGIN_FILES} files`, () => {
     for (let i = 0; i <= MAX_PLUGIN_FILES; i++) fs.writeFileSync(path.join(src, `f${i}`), 'x');
-    expect(() => walkPluginDir(src)).toThrow(/more than \d+ files/);
+    expect(() => walkPluginDir(src)).toThrow(/more than \d+ entries/);
+  });
+
+  it('counts directories toward the entry cap (breadth bomb)', () => {
+    for (let i = 0; i <= MAX_PLUGIN_FILES; i++) fs.mkdirSync(path.join(src, `d${i}`));
+    expect(() => walkPluginDir(src)).toThrow(/more than \d+ entries/);
+  });
+
+  it('rejects a plugin root that is itself a symlink', () => {
+    fs.writeFileSync(path.join(src, 'plugin.json'), '{}');
+    const link = path.join(root, 'link-root');
+    fs.symlinkSync(src, link);
+    expect(() => walkPluginDir(link)).toThrow(/regular directory/);
   });
 
   it('rejects a tree over the total-bytes cap', () => {

@@ -35,7 +35,14 @@ export interface PluginFile {
  */
 export function walkPluginDir(root: string): PluginFile[] {
   const resolvedRoot = path.resolve(root);
+  const rootStat = fs.lstatSync(resolvedRoot);
+  if (rootStat.isSymbolicLink() || !rootStat.isDirectory()) {
+    throw new Error('Plugin rejected: the plugin root must be a regular directory');
+  }
   const files: PluginFile[] = [];
+  // Directories count toward the entry cap too — a breadth bomb of empty
+  // dirs must trip the same abuse bound as a file bomb.
+  let entries = 0;
   let totalBytes = 0;
 
   const visit = (relDir: string, depth: number): void => {
@@ -58,6 +65,10 @@ export function walkPluginDir(root: string): PluginFile[] {
       if (depth + 1 > MAX_PLUGIN_DEPTH) {
         throw new Error(`Plugin rejected: "${rel}" exceeds the maximum nesting depth of ${MAX_PLUGIN_DEPTH}`);
       }
+      entries += 1;
+      if (entries > MAX_PLUGIN_FILES) {
+        throw new Error(`Plugin rejected: more than ${MAX_PLUGIN_FILES} entries`);
+      }
       if (entry.isDirectory()) {
         visit(rel, depth + 1);
         continue;
@@ -68,9 +79,6 @@ export function walkPluginDir(root: string): PluginFile[] {
       const stat = fs.lstatSync(abs);
       files.push({ rel, abs, size: stat.size, mode: stat.mode });
       totalBytes += stat.size;
-      if (files.length > MAX_PLUGIN_FILES) {
-        throw new Error(`Plugin rejected: more than ${MAX_PLUGIN_FILES} files`);
-      }
       if (totalBytes > MAX_PLUGIN_TOTAL_BYTES) {
         throw new Error(`Plugin rejected: total size exceeds ${MAX_PLUGIN_TOTAL_BYTES} bytes`);
       }
