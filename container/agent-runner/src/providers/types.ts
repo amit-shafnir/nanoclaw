@@ -101,8 +101,20 @@ export interface QueryInput {
 }
 
 export type McpServerConfig =
-  | { type?: 'stdio'; command: string; args?: string[]; env?: Record<string, string> }
-  | { type: 'http'; url: string };
+  | {
+      type?: 'stdio';
+      command: string;
+      args?: string[];
+      env?: Record<string, string>;
+      /**
+       * Container-side root of the plugin this server shipped in, recorded by
+       * the host at stamp time. Consumed (and stripped) by plugin-mcp.ts,
+       * which expands ${PLUGIN_ROOT}/${PLUGIN_DATA} and injects both env vars
+       * before the config reaches a provider.
+       */
+      pluginRoot?: string;
+    }
+  | { type: 'http'; url: string; headers?: Record<string, string> };
 
 export interface AgentQuery {
   /** Push a follow-up message into the active query. */
