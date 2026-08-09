@@ -98,16 +98,17 @@ registerResource({
       access: 'approval',
       description:
         'Create (or return the existing) agent group with its container config. Idempotent on --folder. ' +
-        'With --template <ref>, stamp from a local template under templates/ (MCP servers + instructions ' +
-        '+ skills + paused recurring tasks). Use --folder <slug> and --name <display name>. ' +
+        'With --template <ref>, stamp from a local agent plugin under templates/ (skills + MCP servers ' +
+        '+ optional persona, context, and paused recurring tasks). Use --folder <slug> and --name <display name>. ' +
         'Optional --timezone <IANA id> sets the group timezone (template task schedules fire in it); like --name, it is ignored when the folder already exists.',
       handler: async (args) => {
         const timezone = parseTimezoneFlag(args.timezone) ?? undefined;
         if (args.template) {
-          return createAgentFromTemplate(String(args.template), {
+          const { group, report } = createAgentFromTemplate(String(args.template), {
             name: args.name ? String(args.name) : undefined,
             timezone,
           });
+          return report.length > 0 ? { ...group, templateReport: report } : group;
         }
         const folder = args.folder as string;
         if (!folder) throw new Error('--folder is required');
@@ -339,7 +340,8 @@ registerResource({
       access: 'approval',
       description:
         'Add an MCP server to a group. Requires `ncl groups restart` to take effect. ' +
-        'Use --id <group-id> --name <server-name> with either --command <cmd> [--args <json-array>] [--env <json-object>] or --url <url> (HTTPS, or plain HTTP for localhost / host.docker.internal).',
+        'Use --id <group-id> --name <server-name> with either --command <cmd> [--args <json-array>] [--env <json-object>] ' +
+        'or --url <url> [--headers <json-object>] (HTTPS, or plain HTTP for localhost / host.docker.internal).',
       handler: async (args) => {
         const id = args.id as string;
         if (!id) throw new Error('--id is required');
@@ -356,6 +358,7 @@ registerResource({
           url: args.url,
           args: args.args === undefined ? undefined : JSON.parse(String(args.args)),
           env: args.env === undefined ? undefined : JSON.parse(String(args.env)),
+          headers: args.headers === undefined ? undefined : JSON.parse(String(args.headers)),
         });
         updateContainerConfigJson(id, 'mcp_servers', servers);
 

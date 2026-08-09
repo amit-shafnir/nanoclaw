@@ -2,6 +2,7 @@ import { randomUUID } from 'crypto';
 import fs from 'fs';
 import path from 'path';
 
+import { CONTAINER_PLUGINS_DIR } from '../container-config.js';
 import { DATA_DIR, GROUPS_DIR, TIMEZONE } from '../config.js';
 import { createAgentGroup } from '../db/agent-groups.js';
 import {
@@ -12,11 +13,13 @@ import {
 import { isValidTimezone } from '../timezone.js';
 import { assertValidGroupFolder, resolveGroupFolderPath } from '../group-folder.js';
 import { stageGroupPersona } from '../group-persona.js';
+import { log } from '../log.js';
 import { normalizeName } from '../modules/agent-to-agent/db/agent-destinations.js';
 import { createScheduledTask, prepareScheduledTask } from '../modules/scheduling/create.js';
 import type { AgentGroup } from '../types.js';
 import { resolveLocalTemplate } from './local-dir.js';
 import { parseTemplate } from './parse.js';
+import { copyPluginDir } from './plugin-dir.js';
 
 export interface CreateAgentOptions {
   name?: string;
@@ -24,11 +27,18 @@ export interface CreateAgentOptions {
   timezone?: string;
 }
 
+export interface CreateAgentResult {
+  group: AgentGroup;
+  /** Named skip/ignore notices from the plugin reader — surface these to the caller. */
+  report: string[];
+}
+
 /**
- * Stamp a self-contained agent group from a LOCAL template ref under
- * TEMPLATES_DIR. The template carries MCP servers, instructions, optional
- * context extras, skills, and paused recurring tasks, but nothing else (no policy,
- * packages, or provider).
+ * Stamp a self-contained agent group from a LOCAL plugin ref under
+ * TEMPLATES_DIR. The plugin carries skills and MCP servers (portable Agent
+ * Plugins surface) plus the optional NanoClaw extension (persona, context
+ * extras, paused recurring tasks), but nothing else (no policy, packages, or
+ * provider).
  *
  * The template persona is written to the provider-neutral `instructions.prepend.md`
  * (see src/group-persona.ts). Each provider's project-doc composer inlines it at
@@ -37,9 +47,14 @@ export interface CreateAgentOptions {
  * is provider-agnostic, placement needs no provider knowledge at stamp time (the
  * provider is DB-resolved later, at first spawn).
  *
- * Returns the created group; the caller wires it to a channel as usual.
+ * Security invariant: plugin content is data on the host and code only in the
+ * container. Everything copied out of the plugin goes through the hardened
+ * copier; nothing in the plugin is ever executed host-side.
+ *
+ * Returns the created group + the reader's report; the caller wires the group
+ * to a channel as usual.
  */
-export function createAgentFromTemplate(ref: string, opts?: CreateAgentOptions): AgentGroup {
+export function createAgentFromTemplate(ref: string, opts?: CreateAgentOptions): CreateAgentResult {
   const dir = resolveLocalTemplate(ref);
   const tpl = parseTemplate(dir);
   // The group doesn't exist yet, so resolveGroupTimezone can't apply — the
@@ -63,7 +78,9 @@ export function createAgentFromTemplate(ref: string, opts?: CreateAgentOptions):
   });
 
   const id = randomUUID();
-  const name = opts?.name ?? path.basename(dir);
+  // Display-name fallback chain: explicit option → manifest extension
+  // agentName → plugin folder leaf (exactly the pre-plugin derivation).
+  const name = opts?.name ?? tpl.agentName ?? path.basename(dir);
   let folder = normalizeName(name);
   assertValidGroupFolder(folder);
   if (fs.existsSync(resolveGroupFolderPath(folder))) folder = `${folder}-${randomUUID().slice(0, 8)}`;
@@ -80,7 +97,8 @@ export function createAgentFromTemplate(ref: string, opts?: CreateAgentOptions):
 
   // Persona → provider-neutral prepend, inlined at the top of the group's
   // CLAUDE.md/AGENTS.md every spawn (system-prompt tier on any provider).
-  stageGroupPersona(groupDir, tpl.instructions);
+  // Optional: a plain conformant plugin has no persona and stamps without one.
+  if (tpl.instructions !== undefined) stageGroupPersona(groupDir, tpl.instructions);
 
   // Context extras keep their template-relative layout, placed next to the doc
   // the persona is inlined into — so a reference written in instructions.md
@@ -93,18 +111,37 @@ export function createAgentFromTemplate(ref: string, opts?: CreateAgentOptions):
     fs.writeFileSync(dest, content);
   }
 
-  updateContainerConfigJson(id, 'mcp_servers', tpl.mcpServers);
+  // Whole-plugin copy: gives stdio servers a real PLUGIN_ROOT, keeps skill
+  // references into sibling plugin files working, and makes re-stamping
+  // idempotent (the directory is replaced). Mounted read-only in the
+  // container; only plugin-data/ is writable, matching the spec's contract.
+  copyPluginDir(dir, path.join(groupDir, 'plugins', tpl.name));
+  fs.mkdirSync(path.join(groupDir, 'plugin-data', tpl.name), { recursive: true });
 
-  // Per-group skills overlay — keyed by group id, never shared. cpSync creates
-  // intermediate dirs, so .claude-shared/skills need not exist yet.
+  // stdio servers get the container-side plugin root recorded so the
+  // agent-runner can expand ${PLUGIN_ROOT}/${PLUGIN_DATA} and inject both env
+  // vars. Both values are container paths — a host path never leaks into config.
+  const pluginRoot = `${CONTAINER_PLUGINS_DIR}/${tpl.name}`;
+  const mcpServers = Object.fromEntries(
+    Object.entries(tpl.mcpServers).map(([serverName, server]) => [
+      serverName,
+      server.type === 'http' ? server : { ...server, pluginRoot },
+    ]),
+  );
+  updateContainerConfigJson(id, 'mcp_servers', mcpServers);
+
+  // Per-group skills overlay — keyed by group id, never shared. Copied through
+  // the hardened copier like everything else that leaves the plugin.
   const skillsDir = path.join(DATA_DIR, 'v2-sessions', id, '.claude-shared', 'skills');
   for (const { name: skill, srcDir } of tpl.skills) {
-    fs.cpSync(srcDir, path.join(skillsDir, skill), { recursive: true });
+    copyPluginDir(srcDir, path.join(skillsDir, skill));
   }
 
   // Template tasks require explicit activation. The later welcome flow can
   // present these exact paused tasks and resume only the ones the user accepts.
   for (const task of tasks) createScheduledTask(id, task, { status: 'paused' });
 
-  return group;
+  for (const line of tpl.report) log.warn('Template reader notice', { ref, notice: line });
+
+  return { group, report: tpl.report };
 }
