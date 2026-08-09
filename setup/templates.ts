@@ -34,7 +34,11 @@ export interface TemplateAgentInstallOptions {
   confirmReplace: (existing: AgentGroup) => Promise<boolean>;
 }
 
-const MARKER = 'context/instructions.md';
+// A directory is a template iff it is an Agent Plugins directory — the
+// manifest is the discovery marker. The pre-plugin layout is detected only to
+// point the operator at a re-fetch.
+const MARKER = 'plugin.json';
+const LEGACY_MARKER = 'context/instructions.md';
 
 export function cloneRegistry(): ClonedRegistry {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nanoclaw-tpl-'));
@@ -53,17 +57,44 @@ export function cloneRegistry(): ClonedRegistry {
 export function listTemplatesFromDir(dir: string): TemplateEntry[] {
   if (!fs.existsSync(dir)) return [];
   const rootName = path.basename(path.resolve(dir));
-  return fs
-    .readdirSync(dir, { recursive: true })
-    .map((entry): TemplateEntry | null => {
-      const rel = entry.split(path.sep).join('/');
-      if (rel === MARKER) return { ref: '.', name: rootName };
-      if (!rel.endsWith(`/${MARKER}`)) return null;
-      const ref = rel.slice(0, -(MARKER.length + 1));
-      return { ref, name: ref.split('/').pop() ?? ref };
-    })
-    .filter((entry): entry is TemplateEntry => entry !== null)
+  const rels = (fs.readdirSync(dir, { recursive: true }) as string[]).map((entry) =>
+    entry.split(path.sep).join('/'),
+  );
+
+  const refs = new Set<string>();
+  for (const rel of rels) {
+    if (rel === MARKER) refs.add('.');
+    else if (rel.endsWith(`/${MARKER}`)) refs.add(rel.slice(0, -(MARKER.length + 1)));
+  }
+
+  // A context/instructions.md outside any plugin is the pre-plugin template
+  // layout. Fail with a pointer instead of silently listing nothing. (The
+  // same file INSIDE a plugin — e.g. ai.nanoco.nanoclaw/context/ — is fine.)
+  const legacy = rels
+    .filter((rel) => rel === LEGACY_MARKER || rel.endsWith(`/${LEGACY_MARKER}`))
+    .map((rel) => (rel === LEGACY_MARKER ? '.' : rel.slice(0, -(LEGACY_MARKER.length + 1))))
+    .filter((ref) => !isWithinTemplate(ref, refs));
+  if (legacy.length > 0) {
+    throw new Error(
+      `Templates predate the plugin format (no ${MARKER}): ${legacy.join(', ')}. ` +
+        'Re-fetch the template library (and update NanoClaw if fetching does not help).',
+    );
+  }
+
+  return [...refs]
+    .map((ref) => ({ ref, name: ref === '.' ? rootName : (ref.split('/').pop() ?? ref) }))
     .sort((a, b) => a.ref.localeCompare(b.ref));
+}
+
+/** True when `ref` equals or sits anywhere below a discovered template ref. */
+function isWithinTemplate(ref: string, templateRefs: Set<string>): boolean {
+  if (templateRefs.has('.')) return true;
+  for (let current = ref; ; ) {
+    if (templateRefs.has(current)) return true;
+    const cut = current.lastIndexOf('/');
+    if (cut === -1) return false;
+    current = current.slice(0, cut);
+  }
 }
 
 /** Copy a list-derived registry template into the local template library. */
