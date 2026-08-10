@@ -186,12 +186,14 @@ function parseAgentGroup(value: unknown): AgentGroup {
     typeof id !== 'string' ||
     typeof name !== 'string' ||
     typeof folder !== 'string' ||
-    (provider !== null && typeof provider !== 'string') ||
+    // The groups resource projects only id/name/folder/created_at — list rows
+    // carry no agent_provider key (the provider's home is container_configs).
+    (provider != null && typeof provider !== 'string') ||
     typeof createdAt !== 'string'
   ) {
     throw new Error('ncl returned an invalid agent group');
   }
-  return { id, name, folder, agent_provider: provider, created_at: createdAt };
+  return { id, name, folder, agent_provider: provider ?? null, created_at: createdAt };
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

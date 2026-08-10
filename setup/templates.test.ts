@@ -99,6 +99,42 @@ describe('setup template library', () => {
     expect(fs.existsSync(path.join(root, 'data', 'v2-sessions', existing.id))).toBe(false);
   });
 
+  it('parses list rows without agent_provider (the groups resource projection)', async () => {
+    // The real `ncl groups list` projects only id/name/folder/created_at —
+    // rows carry no agent_provider key. A prior wizard step (cli-agent)
+    // guarantees the list is never empty, so this shape always reaches the
+    // parser in a live run.
+    const listRow = {
+      id: 'ag-terminal',
+      name: 'Terminal Agent',
+      folder: '_ping-test',
+      created_at: '2026-01-01T00:00:00.000Z',
+    };
+    const created: AgentGroup = {
+      id: 'ag-new',
+      name: 'Journalist',
+      folder: 'journalist',
+      agent_provider: null,
+      created_at: '2026-01-02T00:00:00.000Z',
+    };
+
+    const result = await installTemplateAgent({
+      ref: 'media/journalist',
+      name: 'Journalist',
+      projectRoot: root,
+      runNcl: async (command) => {
+        if (command === 'groups-list') return [listRow];
+        if (command === 'groups-create') return created;
+        return {};
+      },
+      confirmReplace: async () => {
+        throw new Error('no conflict expected');
+      },
+    });
+
+    expect(result).toEqual({ status: 'installed', group: created });
+  });
+
   it('cancels template installation when replacement is declined', async () => {
     const existing: AgentGroup = {
       id: 'ag-old',
