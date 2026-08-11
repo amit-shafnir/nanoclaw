@@ -4,7 +4,6 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 
-import { normalizeName } from '../src/modules/agent-to-agent/db/agent-destinations.js';
 import { resolveLocalTemplate } from '../src/templates/local-dir.js';
 import type { AgentGroup } from '../src/types.js';
 
@@ -22,16 +21,33 @@ export interface ClonedRegistry {
 
 type RunNcl = (command: string, args: Record<string, unknown>) => Promise<unknown>;
 
-export type TemplateAgentInstallResult = { status: 'installed'; group: AgentGroup } | { status: 'cancelled' };
+export type TemplateAgentInstallResult =
+  | { status: 'installed'; group: AgentGroup }
+  | { status: 'updated'; group: AgentGroup }
+  | { status: 'cancelled' };
+
+/** One plugin-owned surface from the dry-run update plan `groups create --template` returns. */
+export interface TemplateChange {
+  surface: string;
+  name: string;
+  action: string;
+  customized?: boolean;
+}
+
+/** The dry-run plan returned when a group already carries the template's plugin. */
+export interface TemplateReplacePlan {
+  group: AgentGroup;
+  changes: TemplateChange[];
+  note: string;
+}
 
 export interface TemplateAgentInstallOptions {
   ref: string;
   name: string;
   timezone?: string;
   provider?: string;
-  projectRoot: string;
   runNcl: RunNcl;
-  confirmReplace: (existing: AgentGroup) => Promise<boolean>;
+  confirmReplace: (plan: TemplateReplacePlan) => Promise<boolean>;
 }
 
 // A directory is a template iff it is an Agent Plugins directory — the
@@ -107,76 +123,68 @@ export function copyTemplate(srcDir: string, ref: string, destDir: string): stri
   return to;
 }
 
-/** Stamp the setup-selected template through the same ncl command used after setup. */
+/**
+ * Stamp the setup-selected template through the same ncl command used after
+ * setup. `groups create --template` decides what happens: a fresh stamp when
+ * no group carries the plugin, or (on a rerun over a partial install) a
+ * dry-run update plan for the group that does. The plan goes to
+ * `confirmReplace`; on yes, the same command applies it with --yes and the
+ * group restarts so skill/MCP changes take effect. In-place updates never
+ * touch memory, sessions, wiring, or anything else the plugin does not own.
+ */
 export async function installTemplateAgent(options: TemplateAgentInstallOptions): Promise<TemplateAgentInstallResult> {
-  const groups = parseAgentGroups(await options.runNcl('groups-list', {}));
-  const expectedFolder = normalizeName(options.name);
-  const existing = groups.find(
-    (group) =>
-      group.folder === expectedFolder ||
-      group.name.localeCompare(options.name, undefined, { sensitivity: 'accent' }) === 0,
-  );
+  const first = await options.runNcl('groups-create', {
+    template: options.ref,
+    name: options.name,
+    ...(options.timezone ? { timezone: options.timezone } : {}),
+  });
 
-  if (existing && !(await options.confirmReplace(existing))) {
-    return { status: 'cancelled' };
-  }
-
-  let created: AgentGroup | undefined;
-  let replacementCommitted = false;
-  try {
-    created = parseAgentGroup(
-      await options.runNcl('groups-create', {
-        template: options.ref,
-        name: options.name,
-        ...(options.timezone ? { timezone: options.timezone } : {}),
-      }),
+  let group: AgentGroup;
+  const plan = parseReplacePlan(first);
+  if (plan) {
+    if (!(await options.confirmReplace(plan))) return { status: 'cancelled' };
+    const applied = parseReplacePlan(
+      await options.runNcl('groups-create', { template: options.ref, id: plan.group.id, yes: true }),
     );
-
-    if (options.provider) {
-      await options.runNcl('groups-config-update', {
-        id: created.id,
-        provider: options.provider,
-      });
-    }
-
-    if (existing) {
-      await options.runNcl('groups-restart', { id: existing.id });
-      await options.runNcl('groups-delete', { id: existing.id });
-      replacementCommitted = true;
-      removeGroupFiles(options.projectRoot, existing);
-    }
-  } catch (error) {
-    if (created && !replacementCommitted) await removeCreatedGroup(options, created);
-    throw error;
+    if (!applied?.applied) throw new Error('ncl did not apply the template update');
+    group = applied.group;
+  } else {
+    group = parseAgentGroup(first);
   }
 
-  if (!created) throw new Error('ncl did not create the template agent');
-  return { status: 'installed', group: created };
-}
-
-async function removeCreatedGroup(options: TemplateAgentInstallOptions, group: AgentGroup): Promise<void> {
-  try {
-    await options.runNcl('groups-delete', { id: group.id });
-    removeGroupFiles(options.projectRoot, group);
-  } catch {
-    // Preserve the original setup failure; cleanup is best effort.
+  if (options.provider) {
+    await options.runNcl('groups-config-update', { id: group.id, provider: options.provider });
   }
+  if (plan) await options.runNcl('groups-restart', { id: group.id });
+
+  return { status: plan ? 'updated' : 'installed', group };
 }
 
-function removeGroupFiles(projectRoot: string, group: AgentGroup): void {
-  fs.rmSync(path.join(projectRoot, 'groups', group.folder), {
-    recursive: true,
-    force: true,
-  });
-  fs.rmSync(path.join(projectRoot, 'data', 'v2-sessions', group.id), {
-    recursive: true,
-    force: true,
-  });
+/**
+ * Recognize the restamp-plan shape among `groups create` results; a fresh
+ * create returns the group row itself (no `changes`). Shape errors throw —
+ * a half-recognized plan must never be treated as a created group.
+ */
+function parseReplacePlan(value: unknown): (TemplateReplacePlan & { applied: boolean }) | undefined {
+  if (!isRecord(value) || !('changes' in value)) return undefined;
+  const { applied, group, changes, note } = value;
+  if (typeof applied !== 'boolean' || !Array.isArray(changes) || typeof note !== 'string') {
+    throw new Error('ncl returned an invalid template update plan');
+  }
+  return { applied, group: parseAgentGroup(group), changes: changes.map(parseTemplateChange), note };
 }
 
-function parseAgentGroups(value: unknown): AgentGroup[] {
-  if (!Array.isArray(value)) throw new Error('ncl groups list returned an invalid response');
-  return value.map(parseAgentGroup);
+function parseTemplateChange(value: unknown): TemplateChange {
+  if (
+    !isRecord(value) ||
+    typeof value.surface !== 'string' ||
+    typeof value.name !== 'string' ||
+    typeof value.action !== 'string'
+  ) {
+    throw new Error('ncl returned an invalid template update plan');
+  }
+  const { surface, name, action, customized } = value;
+  return { surface, name, action, ...(customized === true ? { customized: true } : {}) };
 }
 
 function parseAgentGroup(value: unknown): AgentGroup {
