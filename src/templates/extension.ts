@@ -91,7 +91,7 @@ function readContextExtras(contextDir: string): { name: string; content: string 
   if (!fs.existsSync(contextDir)) return [];
   return (fs.readdirSync(contextDir, { recursive: true }) as string[])
     .map((f) => f.split(path.sep).join('/'))
-    .filter((f) => f.endsWith('.md') && f !== 'instructions.md' && fs.statSync(path.join(contextDir, f)).isFile())
+    .filter((f) => f.endsWith('.md') && f !== 'instructions.md' && fs.lstatSync(path.join(contextDir, f)).isFile())
     .sort()
     .map((name) => ({ name, content: fs.readFileSync(path.join(contextDir, name), 'utf-8') }));
 }

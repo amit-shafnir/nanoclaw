@@ -211,7 +211,9 @@ describe('sanitizeStoredMcpServers', () => {
 describe('validateMcpServerName', () => {
   it('accepts bare-key-safe names and rejects structural or oversized ones', () => {
     expect(() => validateMcpServerName('brave-search_2')).not.toThrow();
-    for (const name of ['', 'docs]\n[mcp_servers.evil]', 'a b', 'a.b', '"quoted"', 'x'.repeat(65)]) {
+    // __proto__ matches the regex but would set the record's prototype
+    // instead of an own key on assignment — rejected by name.
+    for (const name of ['', 'docs]\n[mcp_servers.evil]', 'a b', 'a.b', '"quoted"', 'x'.repeat(65), '__proto__']) {
       expect(() => validateMcpServerName(name)).toThrow(/1-64 characters/);
     }
   });

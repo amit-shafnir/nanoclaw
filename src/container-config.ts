@@ -34,8 +34,10 @@ export interface McpStdioServerConfig {
    * Working directory in the Agent Plugins fixed forms (./p, ${PLUGIN_ROOT}[/p],
    * ${PLUGIN_DATA}[/p]). For plugin servers the agent-runner (plugin-mcp.ts)
    * resolves it to an absolute container path; providers consume it natively
-   * (codex) or via a launch shim (cwd-shim.ts). Without a pluginRoot
-   * there is nothing to resolve against, so the runtime drops it. No CLI flag
+   * (codex) or via a launch shim (cwd-shim.ts). Without a pluginRoot there is
+   * nothing to resolve against, so the host strips it before container.json
+   * is materialized (sanitizeStoredMcpServers — the only layer that does;
+   * the runtime passes provenance-less servers through untouched). No CLI flag
    * or self-mod tool param exposes it; raw payloads carrying one are rejected
    * at intake (validateAddMcpServer), on original submission and approval
    * replay alike, and sanitizeStoredMcpServers strips it from stored entries
@@ -104,7 +106,10 @@ export function mcpServerPluginOwner(entry: unknown): string | undefined {
 
 /** Throws unless `name` is a safe MCP server name (1-64 chars of [A-Za-z0-9_-]). */
 export function validateMcpServerName(name: string): void {
-  if (!MCP_SERVER_NAME_RE.test(name)) {
+  // "__proto__" passes the regex but assigning servers["__proto__"] sets the
+  // record's prototype instead of an own key — the server would be silently
+  // dropped (or worse) on every intake path, so reject it by name.
+  if (!MCP_SERVER_NAME_RE.test(name) || name === '__proto__') {
     throw new Error('server name must be 1-64 characters of letters, digits, "_" or "-"');
   }
 }
@@ -286,9 +291,10 @@ export function sanitizeStoredMcpServers(raw: unknown, groupName: string): Recor
         server.pluginRoot = pluginRoot;
       }
       if (server.type !== 'http' && server.cwd && !server.pluginRoot) {
-        // cwd resolves against a plugin root; without provenance it could
-        // never take effect (the runtime drops it) — strip it here so the
-        // breadcrumb lands in host logs instead of nowhere.
+        // cwd resolves against a plugin root; without provenance nothing can
+        // resolve it. This strip is the ONLY layer (the runtime passes
+        // provenance-less servers through untouched), and the breadcrumb
+        // lands in host logs instead of nowhere.
         delete server.cwd;
         log.warn('Stripping cwd from stored MCP server without plugin provenance', { group: groupName, server: name });
       }

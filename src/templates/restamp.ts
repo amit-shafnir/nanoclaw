@@ -31,7 +31,7 @@ import { inboundDbPath, withInboundDb } from '../session-manager.js';
 import type { AgentGroup } from '../types.js';
 import { groupSkillsOverlayDir, markPluginServers } from './create-agent.js';
 import { resolveLocalTemplate } from './local-dir.js';
-import { PLUGIN_MANIFEST_FILE } from './manifest.js';
+import { parsePluginManifest, PLUGIN_MANIFEST_FILE } from './manifest.js';
 import { pluginDataCwdSubpaths } from './mcp.js';
 import { parseTemplate, type Template } from './parse.js';
 import { copyPluginDir } from './plugin-dir.js';
@@ -59,12 +59,15 @@ export interface RestampResult {
 /**
  * Agent groups that carry this template's plugin — a stamped manifest on disk
  * is the marker. `ncl groups create --template` uses this to decide between
- * stamping a fresh agent and updating the one already stamped.
+ * stamping a fresh agent and updating the one already stamped. Reads only the
+ * manifest (the full walk/caps/lint pass runs in the stamp it gates, not in
+ * this probe).
  */
 export function groupsCarryingPlugin(ref: string): AgentGroup[] {
-  const tpl = parseTemplate(resolveLocalTemplate(ref));
+  const dir = resolveLocalTemplate(ref);
+  const manifest = parsePluginManifest(JSON.parse(fs.readFileSync(path.join(dir, PLUGIN_MANIFEST_FILE), 'utf-8')));
   return getAllAgentGroups().filter((g) =>
-    fs.existsSync(path.join(resolveGroupFolderPath(g.folder), 'plugins', tpl.name, PLUGIN_MANIFEST_FILE)),
+    fs.existsSync(path.join(resolveGroupFolderPath(g.folder), 'plugins', manifest.name, PLUGIN_MANIFEST_FILE)),
   );
 }
 
@@ -390,7 +393,21 @@ export function restampAgentFromTemplate(ref: string, agentGroupId: string, opts
 
   for (const line of tpl.report) log.warn('Template reader notice', { ref, notice: line });
 
-  if (opts.apply) for (const op of ops) op();
+  // Ops are independent and idempotent; a mid-list throw names how far it
+  // got so the operator knows a re-run converges the rest.
+  if (opts.apply) {
+    for (const [index, op] of ops.entries()) {
+      try {
+        op();
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        throw new Error(
+          `Restamp failed after applying ${index} of ${ops.length} changes (re-run to converge the rest): ${message}`,
+          { cause: err },
+        );
+      }
+    }
+  }
 
   const anyChange = changes.some((c) => c.action !== 'unchanged' && c.action !== 'skip');
   const note = opts.apply
@@ -456,7 +473,11 @@ function mkdirRealWithin(base: string, dir: string): void {
   fs.mkdirSync(dir, { recursive: true });
 }
 
-/** Byte-equality of two directory trees (relative layout + file contents). */
+/**
+ * Equality of two directory trees: relative layout, file contents, and the
+ * executable bit (the copier preserves it, so a chmod-only template revision
+ * must read as a change, not "unchanged").
+ */
 function dirsEqual(a: string, b: string): boolean {
   const filesA = listFilesRecursive(a);
   const filesB = listFilesRecursive(b);
@@ -464,6 +485,7 @@ function dirsEqual(a: string, b: string): boolean {
   for (const [rel, absA] of filesA) {
     const absB = filesB.get(rel);
     if (absB === undefined) return false;
+    if ((fs.lstatSync(absA).mode & 0o111) !== (fs.lstatSync(absB).mode & 0o111)) return false;
     if (!fs.readFileSync(absA).equals(fs.readFileSync(absB))) return false;
   }
   return true;

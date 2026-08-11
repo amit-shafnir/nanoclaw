@@ -112,7 +112,8 @@ registerResource({
         'flagging local customizations that would be lost; memory, plugin-data/, user-added MCP servers, wiring, ' +
         'and sessions are never touched. Pass --yes to apply the update (then run `ncl groups restart`), ' +
         '--id <group-id> to pick among several stamped groups, or --new to stamp another agent regardless. ' +
-        'Use --folder <slug> and --name <display name>. ' +
+        'Without --template, use --folder <slug> (required) and --name <display name>; with --template the ' +
+        "folder derives from the agent name (--name overrides the template's own). " +
         'Optional --timezone <IANA id> sets the group timezone (template task schedules fire in it); like --name, it is ignored when the folder already exists.',
       handler: async (args) => {
         const timezone = parseTimezoneFlag(args.timezone) ?? undefined;

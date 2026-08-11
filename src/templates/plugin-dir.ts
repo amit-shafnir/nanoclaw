@@ -56,9 +56,6 @@ export function walkPluginDir(root: string): PluginFile[] {
       }
       const rel = relDir ? `${relDir}/${name}` : name;
       const abs = path.join(absDir, name);
-      if (path.relative(resolvedRoot, abs).startsWith('..')) {
-        throw new Error(`Plugin rejected: "${rel}" escapes the plugin root`);
-      }
       if (entry.isSymbolicLink()) {
         throw new Error(`Plugin rejected: "${rel}" is a symlink (symlinks are not allowed in plugins)`);
       }
@@ -87,11 +84,6 @@ export function walkPluginDir(root: string): PluginFile[] {
 
   visit('', 0);
   return files;
-}
-
-/** Validate a plugin directory without copying. Throws on any violation. */
-export function assertSafePluginDir(root: string): void {
-  walkPluginDir(root);
 }
 
 /**

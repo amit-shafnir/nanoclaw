@@ -194,6 +194,15 @@ describe('restampAgentFromTemplate', () => {
     expect(result.note).toMatch(/Nothing to apply/);
   });
 
+  it('treats an exec-bit-only template change as an update', () => {
+    // The copier preserves the executable bit, so a chmod-only revision must
+    // ship on restamp instead of comparing as byte-identical.
+    const g = stamp();
+    fs.chmodSync(path.join(TPL, 'plugin.json'), 0o755);
+    const result = restampAgentFromTemplate('sales/sdr', g.id, { apply: false });
+    expect(result.changes.find((c) => c.surface === 'plugin')?.action).toBe('update');
+  });
+
   it('recreates a missing ${PLUGIN_DATA} cwd dir even when plugin files are unchanged', () => {
     // The adoption path: same template ref, but the dir is absent (an older
     // engine skipped cwd servers at stamp time, or the agent deleted it).

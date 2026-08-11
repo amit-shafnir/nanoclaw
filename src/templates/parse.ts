@@ -16,7 +16,7 @@ import type { McpServerConfig } from '../container-config.js';
 import { readNanoclawExtension } from './extension.js';
 import { parsePluginManifest, PLUGIN_MANIFEST_FILE } from './manifest.js';
 import { readPluginMcp } from './mcp.js';
-import { assertSafePluginDir } from './plugin-dir.js';
+import { walkPluginDir } from './plugin-dir.js';
 import { readPluginSkills } from './skills.js';
 import type { TemplateTask } from './tasks.js';
 
@@ -59,7 +59,7 @@ export function parseTemplate(dir: string): Template {
 
   // Containment + caps gate BEFORE any content is read, so a hostile tree
   // (symlink to ~/.ssh, 10 GB file) is rejected without touching its targets.
-  assertSafePluginDir(dir);
+  walkPluginDir(dir);
 
   let manifestRaw: unknown;
   try {
