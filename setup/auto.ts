@@ -210,6 +210,15 @@ async function main(): Promise<void> {
     }
   }
 
+  // Nothing loads .env into the wizard process — bridge the persisted pick so
+  // it survives not just self re-execs (`sg docker`, fail-retry) but full
+  // process restarts. Without this, a run that aborted after the pick leaves a
+  // partial install whose registered groups silently gate the picker off on
+  // rerun, and the pick is lost.
+  if (!process.env.NANOCLAW_TEMPLATE_PATH?.trim()) {
+    const savedPick = readEnvKey('NANOCLAW_TEMPLATE_PATH')?.trim();
+    if (savedPick) process.env.NANOCLAW_TEMPLATE_PATH = savedPick;
+  }
   // Existing installs do not get an unsolicited first-agent picker, but an
   // explicit --template-path is always honoured.
   if (
@@ -944,7 +953,7 @@ async function runTemplateSetup(): Promise<void> {
       p.log.success(`Using template "${preset}".`);
       return;
     }
-    delete process.env.NANOCLAW_TEMPLATE_PATH;
+    clearTemplatePick();
     p.log.warn(`Template "${preset}" not found under ${TEMPLATES_DIR} — pick one below.`);
   }
 
@@ -972,8 +981,19 @@ async function runTemplateSetup(): Promise<void> {
   }
 }
 
+// The pick lives in process.env for this run AND in .env for the next one:
+// the wizard re-execs itself (`sg docker`, fail-retry) and a rerun over a
+// partial install must not lose the choice. Cleared on every terminal path
+// except failure — there it survives so `bash nanoclaw.sh` retries the same
+// template.
 function applyTemplatePick(ref: string): void {
   process.env.NANOCLAW_TEMPLATE_PATH = ref;
+  upsertEnvVar('NANOCLAW_TEMPLATE_PATH', ref);
+}
+
+function clearTemplatePick(): void {
+  delete process.env.NANOCLAW_TEMPLATE_PATH;
+  upsertEnvVar('NANOCLAW_TEMPLATE_PATH', '');
 }
 
 async function pickLibraryTemplate(): Promise<string | undefined> {
@@ -1076,13 +1096,18 @@ async function installSelectedTemplateAgent(provider?: string): Promise<void> {
       name,
       timezone: readEnvKey('TZ') ?? undefined,
       provider,
-      projectRoot: process.cwd(),
       runNcl,
-      confirmReplace: async (existing) => {
+      confirmReplace: async (plan) => {
+        const resets = plan.changes.filter((c) => c.action !== 'unchanged' && c.action !== 'skip');
+        const customized = resets.filter((c) => c.customized).length;
         const replace = ensureAnswer(
           await p.confirm({
-            message: `Replace the existing "${existing.name}" agent with this template? Its current config and files will be removed.`,
-            initialValue: false,
+            message:
+              `Agent "${plan.group.name}" is already stamped from this template. Update it in place? ` +
+              `${resets.length} plugin-owned surface${resets.length === 1 ? '' : 's'} will be reset` +
+              (customized > 0 ? ` (${customized} with local edits that will be lost)` : '') +
+              '. Memory, chats, and wiring are kept.',
+            initialValue: customized === 0,
           }),
         );
         setupLog.userInput('template_replace', String(replace));
@@ -1091,7 +1116,7 @@ async function installSelectedTemplateAgent(provider?: string): Promise<void> {
     });
 
     if (result.status === 'cancelled') {
-      delete process.env.NANOCLAW_TEMPLATE_PATH;
+      clearTemplatePick();
       setupLog.step('template-agent', 'skipped', Date.now() - start, {
         ref,
         reason: 'replacement-declined',
@@ -1101,6 +1126,7 @@ async function installSelectedTemplateAgent(provider?: string): Promise<void> {
       return;
     }
 
+    clearTemplatePick();
     process.env.NANOCLAW_TEMPLATE_AGENT_ID = result.group.id;
     process.env.NANOCLAW_AGENT_NAME = result.group.name;
     setupLog.step('template-agent', 'success', Date.now() - start, {
@@ -1108,12 +1134,30 @@ async function installSelectedTemplateAgent(provider?: string): Promise<void> {
       agent_group_id: result.group.id,
     });
     phEmit('step_completed', { step: 'template-agent', status: 'success' });
-    p.log.success(`Template agent "${result.group.name}" created.`);
+    p.log.success(
+      result.status === 'updated'
+        ? `Template agent "${result.group.name}" updated in place.`
+        : `Template agent "${result.group.name}" created.`,
+    );
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     setupLog.step('template-agent', 'failed', Date.now() - start, { ref, error: message });
     phEmit('step_completed', { step: 'template-agent', status: 'failed' });
-    await fail('template-agent', `Couldn't install the "${ref}" template.`, message);
+    // Warn-and-continue (the ping-skip pattern): a template failure must not
+    // abort an otherwise-working install. The pick stays in .env so a rerun
+    // retries this template.
+    p.log.warn(`Couldn't install the "${ref}" template: ${message}`);
+    note(
+      [
+        wrapForGutter('Setup continues without it; you still get a fresh default agent. To retry the template:', 6),
+        '',
+        "  1. If the service isn't running:",
+        `     macOS:  launchctl kickstart -k gui/$(id -u)/${getLaunchdLabel()}`,
+        `     Linux:  systemctl --user restart ${getSystemdUnit()}`,
+        '  2. Rerun: bash nanoclaw.sh',
+      ].join('\n'),
+      'Skipping the template',
+    );
   }
 }
 
