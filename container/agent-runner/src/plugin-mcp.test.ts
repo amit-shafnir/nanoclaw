@@ -64,8 +64,4 @@ describe('resolvePluginServer', () => {
     });
   });
 
-  it('drops cwd on a non-plugin server: no root to resolve against', () => {
-    const resolved = resolvePluginServer({ command: 'server', cwd: '${PLUGIN_ROOT}/x' });
-    expect(resolved).toEqual({ command: 'server' });
-  });
 });

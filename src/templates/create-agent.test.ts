@@ -125,6 +125,16 @@ describe('createAgentFromTemplate', () => {
     expect(servers.search.cwd).toBe('${PLUGIN_ROOT}');
   });
 
+  it('refuses a template whose task names collide on the truncated id slug', () => {
+    // Both names slug to the same 24-char prefix; the collision must surface
+    // at first stamp, not on the first later restamp.
+    writeTask('a'.repeat(30), '0 9 * * *', 'First.');
+    writeTask(`${'a'.repeat(30)}b`, '0 9 * * *', 'Second.');
+
+    expect(() => createAgentFromTemplate('sales/sdr', { name: 'SDR Collide' })).toThrow(/collide on id slug/);
+    expect(getAllAgentGroups()).toHaveLength(0);
+  });
+
   it('writes context extras at their template-relative paths', () => {
     const { group: g } = createAgentFromTemplate('sales/sdr', { name: 'SDR Extras' });
 

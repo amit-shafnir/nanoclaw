@@ -11,9 +11,8 @@
  *     env can never override them.
  *
  * Servers without `pluginRoot` (CLI- or approval-added) pass through
- * untouched — except a declared cwd, which is dropped: without a plugin root
- * there is nothing to resolve the fixed forms against, and dropping beats
- * handing a provider a literal placeholder path.
+ * untouched — the host strips cwd from provenance-less servers before
+ * container.json is materialized, so none can arrive here.
  */
 import path from 'path';
 
@@ -28,11 +27,7 @@ function pluginDataDir(pluginRoot: string): string {
 export function resolvePluginServer(config: McpServerConfig): McpServerConfig {
   if (config.type === 'http') return config;
   const { pluginRoot, ...server } = config;
-  if (!pluginRoot) {
-    if (!server.cwd) return config;
-    const { pluginRoot: _root, cwd: _cwd, ...rest } = config;
-    return rest;
-  }
+  if (!pluginRoot) return config;
 
   const pluginData = pluginDataDir(pluginRoot);
   // Both replacement values are fixed container paths with no placeholders in
