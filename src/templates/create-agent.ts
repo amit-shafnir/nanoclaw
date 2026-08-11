@@ -44,7 +44,10 @@ export function groupSkillsOverlayDir(agentGroupId: string): string {
  * Mark a template's servers as plugin-owned: the `plugin` ownership marker on
  * every server, plus the container-side `pluginRoot` on stdio servers so the
  * agent-runner can expand ${PLUGIN_ROOT}/${PLUGIN_DATA} and inject both env
- * vars. All values are container paths — a host path never leaks into config.
+ * vars. A stdio server that omits `cwd` gets `${PLUGIN_ROOT}` here — the spec
+ * default (§7.2.1: the plugin root MUST be the working directory) materialized
+ * once at stamp time so every provider's config writer sees an explicit value.
+ * All values are container paths — a host path never leaks into config.
  */
 export function markPluginServers(
   servers: Record<string, McpServerConfig>,
@@ -54,7 +57,9 @@ export function markPluginServers(
   return Object.fromEntries(
     Object.entries(servers).map(([serverName, server]) => [
       serverName,
-      server.type === 'http' ? { ...server, plugin: pluginName } : { ...server, plugin: pluginName, pluginRoot },
+      server.type === 'http'
+        ? { ...server, plugin: pluginName }
+        : { cwd: '${PLUGIN_ROOT}', ...server, plugin: pluginName, pluginRoot },
     ]),
   );
 }

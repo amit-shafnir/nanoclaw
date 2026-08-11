@@ -45,6 +45,7 @@ function writeTemplate(manifestExtras: Record<string, unknown> = {}): void {
       $schema: MCP_SCHEMA_URL,
       mcpServers: {
         hubspot: { type: 'stdio', command: 'npx', args: ['-y', '@hubspot/mcp-server'], cwd: '${PLUGIN_DATA}/state' },
+        search: { type: 'stdio', command: './bin/search' },
         docs: { type: 'streamable-http', url: 'https://mcp.example.com/mcp' },
       },
     }),
@@ -119,6 +120,9 @@ describe('createAgentFromTemplate', () => {
     const servers = JSON.parse(getContainerConfig(g.id)!.mcp_servers);
     expect(servers.hubspot).toMatchObject({ command: 'npx', pluginRoot: '/workspace/agent/plugins/sdr' });
     expect(servers.docs).toEqual({ type: 'http', url: 'https://mcp.example.com/mcp', plugin: 'sdr' });
+    // Declared cwd wins; an omitted one defaults to the plugin root (spec §7.2.1).
+    expect(servers.hubspot.cwd).toBe('${PLUGIN_DATA}/state');
+    expect(servers.search.cwd).toBe('${PLUGIN_ROOT}');
   });
 
   it('writes context extras at their template-relative paths', () => {
