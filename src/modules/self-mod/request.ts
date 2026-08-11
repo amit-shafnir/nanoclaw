@@ -150,7 +150,7 @@ export function validateAddMcpServer(content: Record<string, unknown>, session: 
     notifyAgent(
       session,
       `add_mcp_server failed: server "${serverName}" is owned by plugin "${owner}". ` +
-        'Plugin servers can only be changed by updating the plugin and re-stamping (ncl groups restamp).',
+        'Plugin servers can only be changed by updating the plugin and re-stamping (ncl groups create --template <ref> --yes).',
     );
     return false;
   }

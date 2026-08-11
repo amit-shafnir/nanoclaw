@@ -1,9 +1,9 @@
 /**
  * Plugin-owned MCP servers are template content: the config verbs must refuse
- * to overwrite or delete them (the sanctioned change path is `groups
- * restamp`), while servers without the marker stay fully editable. Runs
- * through dispatch() with the host caller — the same path an approved agent
- * request replays through.
+ * to overwrite or delete them (the sanctioned change path is restamping via
+ * `groups create --template`), while servers without the marker stay fully
+ * editable. Runs through dispatch() with the host caller — the same path an
+ * approved agent request replays through.
  */
 import fs from 'fs';
 import path from 'path';
@@ -104,28 +104,38 @@ describe('plugin-owned MCP server guard (ncl groups config)', () => {
   });
 });
 
-describe('ncl groups restamp', () => {
-  it('is a dry run without --yes and applies with it', async () => {
+describe('ncl groups create --template on an already-stamped plugin', () => {
+  it('previews the in-place update without --yes and applies with it', async () => {
     fs.writeFileSync(
       path.join(TEST_ROOT, 'templates', 'sdr', NANOCLAW_EXTENSION_NS, 'context', 'instructions.md'),
       'You are an SDR agent v2.\n',
     );
 
-    const dryRun = await run('groups-restamp', { id: groupId, template: 'sdr' });
+    const dryRun = await run('groups-create', { template: 'sdr' });
     expect(dryRun.ok).toBe(true);
     if (dryRun.ok) {
-      expect(dryRun.data).toMatchObject({ applied: false });
+      expect(dryRun.data).toMatchObject({ applied: false, group: { id: groupId } });
       expect(dryRun.human).toMatch(/DRY RUN/);
+      expect(dryRun.human).toMatch(/--new/);
     }
 
-    const applied = await run('groups-restamp', { id: groupId, template: 'sdr', yes: true });
+    const applied = await run('groups-create', { template: 'sdr', yes: true });
     expect(applied.ok).toBe(true);
-    if (applied.ok) expect(applied.data).toMatchObject({ applied: true });
+    if (applied.ok) expect(applied.data).toMatchObject({ applied: true, group: { id: groupId } });
   });
 
-  it('rejects unknown flags via strict arg validation', async () => {
-    const res = await run('groups-restamp', { id: groupId, template: 'sdr', force: true });
-    expect(res.ok).toBe(false);
-    if (!res.ok) expect(res.error.message).toMatch(/unknown flag --force/);
+  it('stamps a second agent with --new, then requires --id while both exist', async () => {
+    const second = await run('groups-create', { template: 'sdr', new: true });
+    expect(second.ok).toBe(true);
+    const secondId = second.ok ? (second.data as { id: string }).id : '';
+    expect(secondId).not.toBe(groupId);
+
+    const ambiguous = await run('groups-create', { template: 'sdr' });
+    expect(ambiguous.ok).toBe(false);
+    if (!ambiguous.ok) expect(ambiguous.error.message).toMatch(/2 groups already carry this plugin.*--id/s);
+
+    const targeted = await run('groups-create', { template: 'sdr', id: secondId });
+    expect(targeted.ok).toBe(true);
+    if (targeted.ok) expect(targeted.data).toMatchObject({ applied: false, group: { id: secondId } });
   });
 });

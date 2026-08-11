@@ -51,9 +51,9 @@ export interface McpStdioServerConfig {
   pluginRoot?: string;
   /**
    * Name of the plugin that stamped this server. Ownership marker: plugin-owned
-   * servers reject CLI/self-mod edits and are swapped wholesale by
-   * `ncl groups restamp`. Internal — never CLI input, and not re-attached by
-   * sanitizeStoredMcpServers, so it never reaches container.json.
+   * servers reject CLI/self-mod edits and are swapped wholesale on restamp
+   * (`ncl groups create --template`). Internal — never CLI input, and not
+   * re-attached by sanitizeStoredMcpServers, so it never reaches container.json.
    */
   plugin?: string;
   instructions?: string;

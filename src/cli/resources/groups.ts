@@ -20,10 +20,16 @@ import {
 } from '../../db/container-configs.js';
 import { initGroupFilesystem } from '../../group-init.js';
 import { createAgentFromTemplate } from '../../templates/create-agent.js';
-import { formatRestampResult, restampAgentFromTemplate, type RestampResult } from '../../templates/restamp.js';
+import {
+  formatRestampResult,
+  groupsCarryingPlugin,
+  restampAgentFromTemplate,
+  type RestampResult,
+} from '../../templates/restamp.js';
 import { isValidTimezone } from '../../timezone.js';
 import type { AgentGroup, ContainerConfigRow } from '../../types.js';
 import { registerResource } from '../crud.js';
+import { localizeIsoTimestamps } from '../format.js';
 
 /**
  * Parse a --timezone flag: undefined = not passed, null = explicit clear
@@ -101,12 +107,38 @@ registerResource({
       description:
         'Create (or return the existing) agent group with its container config. Idempotent on --folder. ' +
         'With --template <ref>, stamp from a local agent plugin under templates/ (skills + MCP servers ' +
-        '+ optional persona, context, and paused recurring tasks). Use --folder <slug> and --name <display name>. ' +
+        '+ optional persona, context, and paused recurring tasks). When a group already carries the plugin, ' +
+        'this instead shows the in-place update plan for it — every plugin-owned surface that would change, ' +
+        'flagging local customizations that would be lost; memory, plugin-data/, user-added MCP servers, wiring, ' +
+        'and sessions are never touched. Pass --yes to apply the update (then run `ncl groups restart`), ' +
+        '--id <group-id> to pick among several stamped groups, or --new to stamp another agent regardless. ' +
+        'Use --folder <slug> and --name <display name>. ' +
         'Optional --timezone <IANA id> sets the group timezone (template task schedules fire in it); like --name, it is ignored when the folder already exists.',
       handler: async (args) => {
         const timezone = parseTimezoneFlag(args.timezone) ?? undefined;
         if (args.template) {
-          const { group, report } = createAgentFromTemplate(String(args.template), {
+          const ref = String(args.template);
+          // Same plugin already stamped → in-place update (dry run without
+          // --yes), never a duplicate agent. --new opts out; agent callers
+          // have --id auto-filled, so they always target their own group.
+          if (args.new !== true) {
+            const carriers = args.id ? [] : groupsCarryingPlugin(ref);
+            if (carriers.length > 1) {
+              throw new Error(
+                `${carriers.length} groups already carry this plugin: ` +
+                  carriers.map((g) => `"${g.name}" (${g.id})`).join(', ') +
+                  '. Pass --id <group-id> to update one, or --new to stamp another agent.',
+              );
+            }
+            const targetId = args.id ? String(args.id) : carriers[0]?.id;
+            if (targetId) {
+              const result = restampAgentFromTemplate(ref, targetId, { apply: args.yes === true });
+              return result.applied
+                ? result
+                : { ...result, note: `${result.note} Pass --new to stamp a separate agent instead.` };
+            }
+          }
+          const { group, report } = createAgentFromTemplate(ref, {
             name: args.name ? String(args.name) : undefined,
             timezone,
           });
@@ -137,6 +169,12 @@ registerResource({
         if (timezone) updateContainerConfigScalars(id, { timezone });
         return getAgentGroupByFolder(folder);
       },
+      // The restamp path returns a plan that wants the aligned-lines view;
+      // everything else keeps the generic JSON rendering.
+      formatHuman: (data) =>
+        data !== null && typeof data === 'object' && 'changes' in data && 'plugin' in data
+          ? formatRestampResult(data as RestampResult)
+          : JSON.stringify(localizeIsoTimestamps(data), null, 2),
     },
     delete: {
       access: 'approval',
@@ -223,43 +261,6 @@ registerResource({
 
         return { deleted: id, removed };
       },
-    },
-    restamp: {
-      access: 'approval',
-      description:
-        "Update a group's stamped plugin in place from its (updated) template — same plugin, same agent.\n\n" +
-        'DRY RUN by default: prints a categorized plan of every plugin-owned surface that would change ' +
-        '(plugin files, skills, MCP servers, persona, context files, tasks), flagging files whose local ' +
-        'customizations would be lost. Pass --yes to apply. Everything the plugin does not own — memory, ' +
-        'other workspace files, plugin-data/, user-added MCP servers, wiring, sessions — is never touched. ' +
-        'Task definitions update by name and keep their pause/resume state; tasks the template dropped are deleted. ' +
-        'After applying, run `ncl groups restart` for skill and MCP changes to take effect.',
-      args: [
-        {
-          name: 'id',
-          type: 'string',
-          description: 'Agent group id (auto-filled to your own group inside a container).',
-          required: true,
-        },
-        {
-          name: 'template',
-          type: 'string',
-          description: 'Template ref under templates/ — must be the plugin already stamped on the group.',
-          required: true,
-        },
-        {
-          name: 'yes',
-          type: 'boolean',
-          description: 'Apply the plan. Without it the verb only prints what would change.',
-        },
-      ],
-      examples: [
-        '# Preview what an updated template would replace:\nncl groups restamp --id <group-id> --template sales/sdr',
-        '# Apply it:\nncl groups restamp --id <group-id> --template sales/sdr --yes',
-      ],
-      handler: async (args) =>
-        restampAgentFromTemplate(String(args.template), String(args.id), { apply: args.yes === true }),
-      formatHuman: (data) => formatRestampResult(data as RestampResult),
     },
     restart: {
       access: 'approval',
@@ -396,7 +397,7 @@ registerResource({
         if (owner) {
           throw new Error(
             `MCP server "${name}" is owned by plugin "${owner}" — ` +
-              'update the plugin and run `ncl groups restamp` instead of editing it directly',
+              'update the plugin and restamp it (`ncl groups create --template <ref> --yes`) instead of editing it directly',
           );
         }
         servers[name] = parseMcpServerConfig({

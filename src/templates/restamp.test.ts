@@ -184,7 +184,7 @@ describe('restampAgentFromTemplate', () => {
     };
     createAgentGroup(g);
     ensureContainerConfig(g.id);
-    expect(() => restampAgentFromTemplate('sales/sdr', g.id, { apply: false })).toThrow(/does not have plugin "sdr"/);
+    expect(() => restampAgentFromTemplate('sales/sdr', g.id, { apply: false })).toThrow(/does not carry plugin "sdr"/);
   });
 
   it('reports all-unchanged when the template did not change', () => {

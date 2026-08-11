@@ -19,7 +19,7 @@ import fs from 'fs';
 import path from 'path';
 
 import { mcpServerPluginOwner, resolveGroupTimezone, type McpServerConfig } from '../container-config.js';
-import { getAgentGroup } from '../db/agent-groups.js';
+import { getAgentGroup, getAllAgentGroups } from '../db/agent-groups.js';
 import { getContainerConfig, updateContainerConfigJson } from '../db/container-configs.js';
 import { findTaskSessions } from '../db/sessions.js';
 import { resolveGroupFolderPath } from '../group-folder.js';
@@ -61,6 +61,18 @@ export interface RestampResult {
 }
 
 /**
+ * Agent groups that carry this template's plugin — a stamped manifest on disk
+ * is the marker. `ncl groups create --template` uses this to decide between
+ * stamping a fresh agent and updating the one already stamped.
+ */
+export function groupsCarryingPlugin(ref: string): AgentGroup[] {
+  const tpl = parseTemplate(resolveLocalTemplate(ref));
+  return getAllAgentGroups().filter((g) =>
+    fs.existsSync(path.join(resolveGroupFolderPath(g.folder), 'plugins', tpl.name, PLUGIN_MANIFEST_FILE)),
+  );
+}
+
+/**
  * Plan (and with `apply: true` execute) an in-place plugin update. Throws
  * before any mutation when the group is missing, the group doesn't carry this
  * plugin, either plugin copy fails validation, or a template task is invalid.
@@ -76,8 +88,8 @@ export function restampAgentFromTemplate(ref: string, agentGroupId: string, opts
   const oldPluginDir = path.join(groupDir, 'plugins', tpl.name);
   if (!fs.existsSync(path.join(oldPluginDir, PLUGIN_MANIFEST_FILE))) {
     throw new Error(
-      `Group "${group.name}" does not have plugin "${tpl.name}" stamped; ` +
-        'use `ncl groups create --template` to stamp a new agent instead',
+      `Group "${group.name}" does not carry plugin "${tpl.name}" — ` +
+        'check the group id, or drop --id to stamp a new agent',
     );
   }
   let old: Template;
