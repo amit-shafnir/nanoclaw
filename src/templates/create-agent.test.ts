@@ -110,12 +110,12 @@ describe('createAgentFromTemplate', () => {
     expect(fs.existsSync(path.join(GROUPS_DIR, g.folder, 'plugin-data', 'sdr'))).toBe(true);
   });
 
-  it('records the container-side pluginRoot on stdio servers only', () => {
+  it('records the ownership marker on every server and pluginRoot on stdio only', () => {
     const { group: g } = createAgentFromTemplate('sales/sdr', { name: 'SDR Mcp' });
 
     const servers = JSON.parse(getContainerConfig(g.id)!.mcp_servers);
     expect(servers.hubspot).toMatchObject({ command: 'npx', pluginRoot: '/workspace/agent/plugins/sdr' });
-    expect(servers.docs).toEqual({ type: 'http', url: 'https://mcp.example.com/mcp' });
+    expect(servers.docs).toEqual({ type: 'http', url: 'https://mcp.example.com/mcp', plugin: 'sdr' });
   });
 
   it('writes context extras at their template-relative paths', () => {

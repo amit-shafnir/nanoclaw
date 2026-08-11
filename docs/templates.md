@@ -136,8 +136,55 @@ stdio MCP servers declared by a plugin run against that contract:
 
 Because the whole plugin is present, a skill can reference sibling plugin
 files (say, a `TROUBLESHOOTING.md` at the plugin root) and they exist in the
-container. Re-stamping replaces the plugin directory, so updates are
-idempotent.
+container.
+
+## Updating a stamped agent
+
+`ncl groups create --template` always creates a new agent. To deliver a
+template update to an agent that already exists, restamp it in place:
+
+```bash
+ncl groups restamp --id <group-id> --template <ref>        # dry run: show the plan
+ncl groups restamp --id <group-id> --template <ref> --yes  # apply it
+ncl groups restart --id <group-id>                         # skill/MCP changes take effect
+```
+
+The plugin (including its `ai.nanoco.nanoclaw` extension) is the **source of
+truth** for everything it stamps. Restamping resets those surfaces to the new
+template version and touches nothing else:
+
+| Reset to the template | Never touched |
+|---|---|
+| `plugins/<name>/` (replaced wholesale) | Memory, sessions, wiring |
+| Skills overlay (per skill: updated, added, or removed) | Skills the agent authored itself |
+| Plugin-owned MCP servers (swapped as a set) | MCP servers you added via `add-mcp-server` |
+| Persona (`instructions.prepend.md`) and context files | Other workspace files |
+| Tasks (definitions update by name; dropped tasks are deleted) | Task pause/resume state, `plugin-data/<name>/` |
+
+The dry-run plan lists every surface with its action and flags files whose
+live copy differs from what the previous template version stamped as
+**CUSTOMIZED**: applying resets them and the local edits are lost. The
+baseline for that comparison is the previous plugin copy still sitting at
+`plugins/<name>/`, so no extra bookkeeping exists to drift.
+
+Two collision rules keep operator state safe: a template server whose name is
+already taken by a server you added is skipped with a notice (yours wins),
+and task activation is preserved, so a resumed task stays resumed while its
+prompt and schedule update.
+
+Three operational notes. Restamping is idempotent: if an apply fails partway,
+fix the cause and re-run it; the remaining changes converge. When an agent
+requests a restamp, the approval card shows only the command line, so run the
+dry run yourself before approving. And `plugins/<name>/` is itself the
+comparison baseline, so edits made directly inside it (host-side; the
+container mounts it read-only) are neither detected as customizations nor
+preserved.
+
+Because plugin-owned MCP servers are template content, `ncl groups config
+add-mcp-server` / `remove-mcp-server` and the agent's `add_mcp_server` tool
+refuse to edit them; update the plugin and restamp instead. Restamping only
+works against the same plugin name: to switch an agent to a different plugin,
+create a new agent.
 
 ## Security posture
 
@@ -225,7 +272,8 @@ Pricing rules live in `additional_context/pricing.md`. Read it before quoting a 
 ```
 
 Context files are copied when you stamp, so files added to the template later
-won't reach an already-created agent. Re-stamp the same name to update it.
+won't reach an already-created agent automatically. Deliver them with
+`ncl groups restamp` (see [Updating a stamped agent](#updating-a-stamped-agent)).
 
 ## MCP servers and credentials
 

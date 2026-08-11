@@ -23,6 +23,7 @@ import type { Adapter, AdapterPostableMessage, RawMessage } from 'chat';
 import { createChatSdkBridge } from '../../channels/chat-sdk-bridge.js';
 import { initTestDb, closeDb, runMigrations } from '../../db/index.js';
 import { createAgentGroup } from '../../db/agent-groups.js';
+import { ensureContainerConfig, updateContainerConfigJson } from '../../db/container-configs.js';
 import { createMessagingGroup } from '../../db/messaging-groups.js';
 import { createSession, getPendingApprovalsByAction } from '../../db/sessions.js';
 import { setDeliveryAdapter, type ChannelDeliveryAdapter } from '../../delivery.js';
@@ -269,6 +270,17 @@ describe('add_mcp_server validation', () => {
     await submitAddMcpServer({ name: 'docs]\n[mcp_servers.evil]', url: 'https://mcp.example.com/mcp' }, session);
 
     expect(expectRejected()).toMatch(/1-64 characters/);
+  });
+
+  it('rejects editing a plugin-owned server before creating an approval', async () => {
+    ensureContainerConfig('ag-1');
+    updateContainerConfigJson('ag-1', 'mcp_servers', {
+      docs: { type: 'http', url: 'https://mcp.example.com/mcp', plugin: 'sdr' },
+    });
+
+    await submitAddMcpServer({ name: 'docs', url: 'https://evil.example.com/mcp' }, session);
+
+    expect(expectRejected()).toMatch(/owned by plugin "sdr"/);
   });
 
   it('rejects an env key that is not a valid environment variable name', async () => {

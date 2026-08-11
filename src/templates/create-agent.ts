@@ -10,6 +10,7 @@ import {
   updateContainerConfigJson,
   updateContainerConfigScalars,
 } from '../db/container-configs.js';
+import type { McpServerConfig } from '../container-config.js';
 import { isValidTimezone } from '../timezone.js';
 import { assertValidGroupFolder, resolveGroupFolderPath } from '../group-folder.js';
 import { stageGroupPersona } from '../group-persona.js';
@@ -31,6 +32,30 @@ export interface CreateAgentResult {
   group: AgentGroup;
   /** Named skip/ignore notices from the plugin reader — surface these to the caller. */
   report: string[];
+}
+
+/** Group-private skills overlay — where plugin skills are discovered and executed from. */
+export function groupSkillsOverlayDir(agentGroupId: string): string {
+  return path.join(DATA_DIR, 'v2-sessions', agentGroupId, '.claude-shared', 'skills');
+}
+
+/**
+ * Mark a template's servers as plugin-owned: the `plugin` ownership marker on
+ * every server, plus the container-side `pluginRoot` on stdio servers so the
+ * agent-runner can expand ${PLUGIN_ROOT}/${PLUGIN_DATA} and inject both env
+ * vars. All values are container paths — a host path never leaks into config.
+ */
+export function markPluginServers(
+  servers: Record<string, McpServerConfig>,
+  pluginName: string,
+): Record<string, McpServerConfig> {
+  const pluginRoot = `${CONTAINER_PLUGINS_DIR}/${pluginName}`;
+  return Object.fromEntries(
+    Object.entries(servers).map(([serverName, server]) => [
+      serverName,
+      server.type === 'http' ? { ...server, plugin: pluginName } : { ...server, plugin: pluginName, pluginRoot },
+    ]),
+  );
 }
 
 /**
@@ -118,21 +143,11 @@ export function createAgentFromTemplate(ref: string, opts?: CreateAgentOptions):
   copyPluginDir(dir, path.join(groupDir, 'plugins', tpl.name));
   fs.mkdirSync(path.join(groupDir, 'plugin-data', tpl.name), { recursive: true });
 
-  // stdio servers get the container-side plugin root recorded so the
-  // agent-runner can expand ${PLUGIN_ROOT}/${PLUGIN_DATA} and inject both env
-  // vars. Both values are container paths — a host path never leaks into config.
-  const pluginRoot = `${CONTAINER_PLUGINS_DIR}/${tpl.name}`;
-  const mcpServers = Object.fromEntries(
-    Object.entries(tpl.mcpServers).map(([serverName, server]) => [
-      serverName,
-      server.type === 'http' ? server : { ...server, pluginRoot },
-    ]),
-  );
-  updateContainerConfigJson(id, 'mcp_servers', mcpServers);
+  updateContainerConfigJson(id, 'mcp_servers', markPluginServers(tpl.mcpServers, tpl.name));
 
   // Per-group skills overlay — keyed by group id, never shared. Copied through
   // the hardened copier like everything else that leaves the plugin.
-  const skillsDir = path.join(DATA_DIR, 'v2-sessions', id, '.claude-shared', 'skills');
+  const skillsDir = groupSkillsOverlayDir(id);
   for (const { name: skill, srcDir } of tpl.skills) {
     copyPluginDir(srcDir, path.join(skillsDir, skill));
   }

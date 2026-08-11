@@ -1,6 +1,7 @@
 import { randomUUID } from 'crypto';
 
 import {
+  mcpServerPluginOwner,
   parseMcpServerConfig,
   validateMcpServerName,
   type AdditionalMountConfig,
@@ -19,6 +20,7 @@ import {
 } from '../../db/container-configs.js';
 import { initGroupFilesystem } from '../../group-init.js';
 import { createAgentFromTemplate } from '../../templates/create-agent.js';
+import { formatRestampResult, restampAgentFromTemplate, type RestampResult } from '../../templates/restamp.js';
 import { isValidTimezone } from '../../timezone.js';
 import type { AgentGroup, ContainerConfigRow } from '../../types.js';
 import { registerResource } from '../crud.js';
@@ -222,6 +224,43 @@ registerResource({
         return { deleted: id, removed };
       },
     },
+    restamp: {
+      access: 'approval',
+      description:
+        "Update a group's stamped plugin in place from its (updated) template — same plugin, same agent.\n\n" +
+        'DRY RUN by default: prints a categorized plan of every plugin-owned surface that would change ' +
+        '(plugin files, skills, MCP servers, persona, context files, tasks), flagging files whose local ' +
+        'customizations would be lost. Pass --yes to apply. Everything the plugin does not own — memory, ' +
+        'other workspace files, plugin-data/, user-added MCP servers, wiring, sessions — is never touched. ' +
+        'Task definitions update by name and keep their pause/resume state; tasks the template dropped are deleted. ' +
+        'After applying, run `ncl groups restart` for skill and MCP changes to take effect.',
+      args: [
+        {
+          name: 'id',
+          type: 'string',
+          description: 'Agent group id (auto-filled to your own group inside a container).',
+          required: true,
+        },
+        {
+          name: 'template',
+          type: 'string',
+          description: 'Template ref under templates/ — must be the plugin already stamped on the group.',
+          required: true,
+        },
+        {
+          name: 'yes',
+          type: 'boolean',
+          description: 'Apply the plan. Without it the verb only prints what would change.',
+        },
+      ],
+      examples: [
+        '# Preview what an updated template would replace:\nncl groups restamp --id <group-id> --template sales/sdr',
+        '# Apply it:\nncl groups restamp --id <group-id> --template sales/sdr --yes',
+      ],
+      handler: async (args) =>
+        restampAgentFromTemplate(String(args.template), String(args.id), { apply: args.yes === true }),
+      formatHuman: (data) => formatRestampResult(data as RestampResult),
+    },
     restart: {
       access: 'approval',
       description:
@@ -353,6 +392,13 @@ registerResource({
         if (!row) throw new Error(`No container config for group: ${id}`);
 
         const servers = JSON.parse(row.mcp_servers) as Record<string, McpServerConfig>;
+        const owner = mcpServerPluginOwner(servers[name]);
+        if (owner) {
+          throw new Error(
+            `MCP server "${name}" is owned by plugin "${owner}" — ` +
+              'update the plugin and run `ncl groups restamp` instead of editing it directly',
+          );
+        }
         servers[name] = parseMcpServerConfig({
           command: args.command,
           url: args.url,
@@ -380,6 +426,13 @@ registerResource({
 
         const servers = JSON.parse(row.mcp_servers) as Record<string, McpServerConfig>;
         if (!servers[name]) throw new Error(`MCP server "${name}" not found`);
+        const owner = mcpServerPluginOwner(servers[name]);
+        if (owner) {
+          throw new Error(
+            `MCP server "${name}" is owned by plugin "${owner}" — ` +
+              'it would reappear on the next restamp; remove it from the plugin instead',
+          );
+        }
         delete servers[name];
         updateContainerConfigJson(id, 'mcp_servers', servers);
 

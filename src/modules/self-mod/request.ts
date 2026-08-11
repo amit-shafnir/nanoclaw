@@ -14,8 +14,9 @@
  */
 import { createHash } from 'node:crypto';
 
-import { parseMcpServerConfig, validateMcpServerName } from '../../container-config.js';
+import { mcpServerPluginOwner, parseMcpServerConfig, validateMcpServerName } from '../../container-config.js';
 import { getAgentGroup } from '../../db/agent-groups.js';
+import { getContainerConfig } from '../../db/container-configs.js';
 import { log } from '../../log.js';
 import type { Session } from '../../types.js';
 import { notifyAgent, requestApproval } from '../approvals/index.js';
@@ -136,6 +137,21 @@ export function validateAddMcpServer(content: Record<string, unknown>, session: 
     // eslint-disable-next-line no-catch-all/no-catch-all -- parse failures are expected user input errors
   } catch (err) {
     notifyAgent(session, `add_mcp_server failed: ${err instanceof Error ? err.message : String(err)}.`);
+    return false;
+  }
+
+  // Plugin-owned servers are template content: reject before an approval round
+  // is spent — the only sanctioned change path is updating the plugin and
+  // re-stamping (apply.ts re-checks in case an approval races a restamp).
+  const configRow = getContainerConfig(agentGroup.id);
+  const existing = configRow ? (JSON.parse(configRow.mcp_servers) as Record<string, unknown>)[serverName] : undefined;
+  const owner = mcpServerPluginOwner(existing);
+  if (owner) {
+    notifyAgent(
+      session,
+      `add_mcp_server failed: server "${serverName}" is owned by plugin "${owner}". ` +
+        'Plugin servers can only be changed by updating the plugin and re-stamping (ncl groups restamp).',
+    );
     return false;
   }
 

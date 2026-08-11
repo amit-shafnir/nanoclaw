@@ -106,7 +106,9 @@ export function copyPluginDir(src: string, dest: string): void {
   for (const file of files) {
     const target = path.join(dest, ...file.rel.split('/'));
     fs.mkdirSync(path.dirname(target), { recursive: true });
-    fs.copyFileSync(file.abs, target);
+    // COPYFILE_EXCL: dest was freshly created above, so any existing target is
+    // a concurrently planted symlink — fail loudly rather than write through.
+    fs.copyFileSync(file.abs, target, fs.constants.COPYFILE_EXCL);
     // Preserve the executable bit — skills legitimately ship scripts.
     fs.chmodSync(target, file.mode & 0o777);
   }
