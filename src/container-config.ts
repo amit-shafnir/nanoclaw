@@ -111,8 +111,8 @@ export function parseMcpServerConfig(input: Record<string, unknown>): McpServerC
   if (type !== undefined && type !== 'stdio' && type !== 'http') {
     throw new Error('type must be "stdio", "http", or "streamable-http"');
   }
-  if (type === 'stdio' && !command) throw new Error('type "stdio" requires --command');
-  if (type === 'http' && !url) throw new Error('type "http" requires --url');
+  if (type === 'stdio' && !command) throw new Error('type "stdio" requires command');
+  if (type === 'http' && !url) throw new Error('type "http" requires url');
 
   const instructions = input.instructions;
   if (instructions !== undefined && typeof instructions !== 'string') {
@@ -142,7 +142,7 @@ export function parseMcpServerConfig(input: Record<string, unknown>): McpServerC
         throw new Error(`url query parameter "${key}" looks like a credential; use OneCLI for authentication`);
       }
     }
-    const headers = parseStringRecord(input.headers, '--headers');
+    const headers = parseStringRecord(input.headers, 'headers');
     return {
       type: 'http',
       url,
@@ -152,12 +152,12 @@ export function parseMcpServerConfig(input: Record<string, unknown>): McpServerC
   }
   if (command === undefined) throw new Error('Provide exactly one of command or url');
 
-  if (input.headers !== undefined) throw new Error('--headers is only valid with --url');
+  if (input.headers !== undefined) throw new Error('headers is only valid with url');
   const args = input.args ?? [];
   if (!Array.isArray(args) || !args.every((arg) => typeof arg === 'string')) {
     throw new Error('args must be a JSON array of strings');
   }
-  const env = parseStringRecord(input.env, '--env') ?? {};
+  const env = parseStringRecord(input.env, 'env') ?? {};
   for (const key of Object.keys(env)) {
     if (!ENV_KEY_RE.test(key)) {
       throw new Error(`env key ${JSON.stringify(key)} must be a valid environment variable name`);
@@ -250,6 +250,7 @@ export function sanitizeStoredMcpServers(raw: unknown, groupName: string): Recor
       continue;
     }
     try {
+      validateMcpServerName(name);
       const server = parseMcpServerConfig(entry as Record<string, unknown>);
       const pluginRoot = (entry as Record<string, unknown>).pluginRoot;
       if (

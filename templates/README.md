@@ -52,9 +52,9 @@ Notes:
   (`ncl groups config update --provider …` or during setup).
 - **MCP transport is declared.** Every `mcp.json` server carries a `type`:
   `"stdio"` (`command` + `args` + optional `env`) or `"streamable-http"` (an
-  HTTPS `url` plus optional `headers`). Userinfo, fragments, and
-  credential-looking query parameters are rejected; other query parameters
-  are fine. `sse` is not supported.
+  HTTPS `url` plus optional `headers`; plain HTTP for loopback hosts only).
+  Userinfo, fragments, and credential-looking query parameters are rejected;
+  other query parameters are fine. `sse` is not supported.
 - **No secrets.** `mcp.json` carries launch config only; credentials are
   injected by the credentials proxy at request time. If an MCP server refuses
   to boot without an env var, use the literal `"placeholder"` — stamping

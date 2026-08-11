@@ -144,7 +144,6 @@ function readServerEntry(name: string, entry: unknown, report: string[]): McpSer
     if (key === 'PLUGIN_ROOT' || key === 'PLUGIN_DATA') {
       return `env must not define "${key}" (the client always sets it)`;
     }
-    if (key.includes('${')) return `env key "${key}" does not support placeholder expansion`;
   }
   lintSecrets(name, 'env', server.env ?? {}, report);
   return server;

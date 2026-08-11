@@ -258,10 +258,11 @@ credential-looking query parameters (`?api_key=…`, `?token=…`) are rejected;
 authentication belongs in the credentials proxy. Non-secret query parameters
 (e.g. Datadog's `?toolsets=apm`) are fine. Hostnames that reach the
 container's host machine are rejected, and plain HTTP is allowed only for
-`localhost`. A stdio `command` is a single token: a bare executable name or
-a `./`-relative path resolved against the plugin root. An explicit `cwd` is
-validated against the spec's fixed forms but currently skipped with a notice
-(the provider runtime does not support it).
+loopback hosts (`localhost`, `127.0.0.1`, `[::1]`). A stdio `command` is a
+single token: a bare executable name or a `./`-relative path resolved against
+the plugin root. An explicit `cwd` is validated against the spec's fixed
+forms but currently skipped with a notice (the provider runtime does not
+support it).
 
 Credentials are held by the **credentials proxy** and injected into outbound
 HTTPS calls at the proxy boundary, matched by API host, at request time. The key

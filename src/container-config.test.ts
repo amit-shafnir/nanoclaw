@@ -133,8 +133,8 @@ describe('parseMcpServerConfig', () => {
   it.each([
     [{ type: 'sse', url: 'https://mcp.example.com/mcp' }, /unsupported transport "sse"/],
     [{ type: 'websocket', url: 'https://mcp.example.com/mcp' }, /type must be/],
-    [{ type: 'stdio', url: 'https://mcp.example.com/mcp' }, /requires --command/],
-    [{ type: 'http', command: 'server' }, /requires --url/],
+    [{ type: 'stdio', url: 'https://mcp.example.com/mcp' }, /requires command/],
+    [{ type: 'http', command: 'server' }, /requires url/],
   ])('rejects a mismatched or unsupported declared type %#', (input, message) => {
     expect(() => parseMcpServerConfig(input)).toThrow(message);
   });
@@ -145,7 +145,7 @@ describe('parseMcpServerConfig', () => {
       url: 'https://mcp.example.com/mcp',
       headers: { 'X-Client': 'nanoclaw' },
     });
-    expect(() => parseMcpServerConfig({ command: 'server', headers: { A: 'b' } })).toThrow(/only valid with --url/);
+    expect(() => parseMcpServerConfig({ command: 'server', headers: { A: 'b' } })).toThrow(/only valid with url/);
     expect(() => parseMcpServerConfig({ url: 'https://mcp.example.com/mcp', headers: { A: 1 } })).toThrow(
       /string values/,
     );
@@ -180,6 +180,7 @@ describe('sanitizeStoredMcpServers', () => {
         badRoot: { command: 'server', pluginRoot: '/etc' },
         broken: { url: 'http://insecure.example.com' },
         notAnObject: 42,
+        'bad.name': { command: 'server' },
       },
       'test-group',
     );

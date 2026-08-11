@@ -224,6 +224,16 @@ describe('parseTemplate', () => {
         { type: 'stdio', command: 'server', env: { PLUGIN_ROOT: '/x' } },
         /must not define "PLUGIN_ROOT"/,
       ],
+      [
+        'invalid env key',
+        { type: 'stdio', command: 'server', env: { 'BAD KEY': 'v' } },
+        /valid environment variable name/,
+      ],
+      [
+        'plain-http host-gateway url',
+        { type: 'streamable-http', url: 'http://host.docker.internal/mcp' },
+        /reaches the container host/,
+      ],
     ])('skips a server with %s and keeps the rest', (_case, server, message) => {
       writeManifest();
       writeMcp({ bad: server, good: { type: 'stdio', command: 'server' } });
@@ -233,6 +243,19 @@ describe('parseTemplate', () => {
       expect(Object.keys(tpl.mcpServers)).toEqual(['good']);
       expect(tpl.report.join('\n')).toMatch(/server "bad" skipped/);
       expect(tpl.report.join('\n')).toMatch(message);
+    });
+
+    it('accepts plain-HTTP URLs for loopback hosts', () => {
+      writeManifest();
+      writeMcp({
+        v4: { type: 'streamable-http', url: 'http://127.0.0.1:9000/mcp' },
+        v6: { type: 'streamable-http', url: 'http://[::1]:9000/mcp' },
+      });
+
+      const tpl = parseTemplate(dir);
+
+      expect(Object.keys(tpl.mcpServers)).toEqual(['v4', 'v6']);
+      expect(tpl.report).toEqual([]);
     });
 
     it('skips a server whose name fails the shared name validation', () => {
