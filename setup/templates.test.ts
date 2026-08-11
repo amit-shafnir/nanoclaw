@@ -136,9 +136,10 @@ describe('setup template library', () => {
     };
     const calls: Array<{ command: string; args: Record<string, unknown> }> = [];
     let confirmed: TemplateReplacePlan | undefined;
+    // No operator name: the create call must omit it entirely so the CLI's
+    // fallback to the template's own agentName stays reachable.
     const result = await installTemplateAgent({
       ref: 'sales/sdr',
-      name: 'SDR',
       runNcl: async (command, args) => {
         calls.push({ command, args });
         if (command === 'groups-create') return args.yes ? { ...plan, applied: true } : plan;
@@ -153,7 +154,7 @@ describe('setup template library', () => {
     expect(result).toEqual({ status: 'updated', group: stamped });
     expect(confirmed?.changes).toEqual(plan.changes);
     expect(calls).toEqual([
-      { command: 'groups-create', args: { template: 'sales/sdr', name: 'SDR' } },
+      { command: 'groups-create', args: { template: 'sales/sdr' } },
       { command: 'groups-create', args: { template: 'sales/sdr', id: 'ag-old', yes: true } },
       { command: 'groups-restart', args: { id: 'ag-old' } },
     ]);

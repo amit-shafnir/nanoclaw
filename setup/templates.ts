@@ -43,7 +43,8 @@ export interface TemplateReplacePlan {
 
 export interface TemplateAgentInstallOptions {
   ref: string;
-  name: string;
+  /** Explicit operator name. Omit to let the CLI fall back to the template's own agentName. */
+  name?: string;
   timezone?: string;
   provider?: string;
   runNcl: RunNcl;
@@ -135,7 +136,7 @@ export function copyTemplate(srcDir: string, ref: string, destDir: string): stri
 export async function installTemplateAgent(options: TemplateAgentInstallOptions): Promise<TemplateAgentInstallResult> {
   const first = await options.runNcl('groups-create', {
     template: options.ref,
-    name: options.name,
+    ...(options.name ? { name: options.name } : {}),
     ...(options.timezone ? { timezone: options.timezone } : {}),
   });
 

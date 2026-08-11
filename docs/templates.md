@@ -47,10 +47,12 @@ finish wiring yet. When a channel is ready, setup wires that existing agent and
 sends the welcome message. The selected provider remains separate from the
 template.
 
-If an agent with the selected name already exists, setup asks whether to replace
-it. **Yes** installs a new agent with the template's instructions, MCP servers,
-skills, and paused tasks, then removes the previous agent. **No** cancels only
-the template installation and continues setup without it.
+If a group already carries this template's plugin (a rerun over a partial
+install), setup shows the in-place update plan — how many plugin-owned
+surfaces reset, and how many carry local edits that would be lost — and asks
+before applying. **Yes** updates that agent in place; memory, chats, and
+wiring are kept. **No** cancels only the template installation and continues
+setup without it.
 
 Advanced setup can preset a local ref with **First-agent template**. The same
 setting is available as `--template-path sales/sdr` or

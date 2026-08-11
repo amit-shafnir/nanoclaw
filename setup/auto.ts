@@ -1077,9 +1077,10 @@ async function installSelectedTemplateAgent(provider?: string): Promise<void> {
   const ref = process.env.NANOCLAW_TEMPLATE_PATH?.trim();
   if (!ref || process.env.NANOCLAW_TEMPLATE_AGENT_ID?.trim()) return;
 
-  const name =
-    process.env.NANOCLAW_AGENT_NAME?.trim() ||
-    (ref === '.' ? path.basename(TEMPLATES_DIR) : (ref.split('/').pop() ?? ref));
+  // Only an explicit operator name overrides the template: the CLI's own
+  // fallback chain (--name → the manifest's agentName → the folder leaf) must
+  // stay reachable through the wizard, or a template's agentName is dead.
+  const name = process.env.NANOCLAW_AGENT_NAME?.trim() || undefined;
   const transport = new SocketTransport();
   const runNcl = async (command: string, args: Record<string, unknown>): Promise<unknown> => {
     const response = await transport.sendFrame({ id: randomUUID(), command, args });
