@@ -155,6 +155,15 @@ export function validateAddMcpServer(content: Record<string, unknown>, session: 
     return false;
   }
 
+  // cwd only means something for plugin-shipped servers (the runtime resolves
+  // it against the plugin root, which approval-added servers never have — it
+  // would be silently dropped). Rejecting keeps the card honest: an approver
+  // must never sign a working directory that won't take effect.
+  if (serverConfig.type !== 'http' && serverConfig.cwd !== undefined) {
+    notifyAgent(session, 'add_mcp_server failed: cwd is only supported for plugin-shipped servers.');
+    return false;
+  }
+
   const args = serverConfig.type === 'http' ? [] : (serverConfig.args ?? []);
   const env = serverConfig.type === 'http' ? {} : (serverConfig.env ?? {});
 
@@ -227,11 +236,6 @@ export async function requestAddMcpServerHold(content: Record<string, unknown>, 
       `args: ${escapeInvisibles(JSON.stringify(displayArgs))}`,
       `env: ${escapeInvisibles(JSON.stringify(displayEnv))}`,
     ];
-    // Rare (no CLI flag or tool param exposes it), but a raw payload can
-    // carry cwd — the approver must never sign a field the card hides.
-    if (serverConfig.cwd !== undefined) {
-      fields.push(`cwd: ${escapeInvisibles(JSON.stringify(serverConfig.cwd))}`);
-    }
   }
   if (serverConfig.instructions !== undefined) {
     fields.push(`instructions: ${escapeInvisibles(JSON.stringify(serverConfig.instructions))}`);

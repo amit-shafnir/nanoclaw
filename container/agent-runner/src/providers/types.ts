@@ -113,6 +113,14 @@ export type McpServerConfig =
        * before the config reaches a provider.
        */
       pluginRoot?: string;
+      /**
+       * Working directory for the server process. By the time a provider sees
+       * it, plugin-mcp.ts has resolved it to an absolute container path (and
+       * dropped it for servers without a pluginRoot). A provider whose runtime
+       * cannot set a spawn directory must shim it (cwd-shim.ts) or
+       * drop it — never launch in the wrong directory.
+       */
+      cwd?: string;
     }
   | { type: 'http'; url: string; headers?: Record<string, string> };
 

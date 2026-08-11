@@ -165,6 +165,8 @@ describe('parseMcpServerConfig', () => {
     ['./a/../b', /escapes the plugin root/],
     ['${PLUGIN_ROOT}/../up', /escapes the plugin root/],
     ['${PLUGIN_DATA}/a/${PLUGIN_ROOT}', /escapes the plugin root/],
+    ['${PLUGIN_DATA}//x', /escapes the plugin root/],
+    ['./a//b', /escapes the plugin root/],
     [7, /cwd must be/],
   ])('rejects cwd %s', (cwd, message) => {
     expect(() => parseMcpServerConfig({ command: 'server', cwd })).toThrow(message);
@@ -187,6 +189,18 @@ describe('sanitizeStoredMcpServers', () => {
     expect(Object.keys(sanitized).sort()).toEqual(['badRoot', 'good', 'remote']);
     expect(sanitized.good).toMatchObject({ pluginRoot: `${CONTAINER_PLUGINS_DIR}/sdr` });
     expect(sanitized.badRoot).not.toHaveProperty('pluginRoot');
+  });
+
+  it('strips cwd from entries without plugin provenance, keeps it with', () => {
+    const sanitized = sanitizeStoredMcpServers(
+      {
+        planted: { command: 'server', cwd: '${PLUGIN_DATA}/x' },
+        plugin: { command: 'server', cwd: '${PLUGIN_DATA}/x', pluginRoot: `${CONTAINER_PLUGINS_DIR}/sdr` },
+      },
+      'test-group',
+    );
+    expect(sanitized.planted).not.toHaveProperty('cwd');
+    expect(sanitized.plugin).toMatchObject({ cwd: '${PLUGIN_DATA}/x' });
   });
 
   it('returns empty on a non-object blob', () => {

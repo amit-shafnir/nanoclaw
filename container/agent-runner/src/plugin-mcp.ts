@@ -3,14 +3,17 @@
  * plugin (marked by the host with `pluginRoot` at stamp time):
  *
  *   - `${PLUGIN_ROOT}` / `${PLUGIN_DATA}` are expanded once, non-recursively,
- *     in args elements and env values (never in the command or env keys —
+ *     in args elements, env values, and cwd (never in the command or env keys —
  *     the host-side reader rejects those at stamp time).
- *   - a `./`-relative command resolves against the plugin root.
+ *   - a `./`-relative command or cwd resolves against the plugin root, so any
+ *     cwd a provider sees is absolute.
  *   - PLUGIN_ROOT and PLUGIN_DATA env vars are injected last, so configured
  *     env can never override them.
  *
  * Servers without `pluginRoot` (CLI- or approval-added) pass through
- * untouched.
+ * untouched — except a declared cwd, which is dropped: without a plugin root
+ * there is nothing to resolve the fixed forms against, and dropping beats
+ * handing a provider a literal placeholder path.
  */
 import path from 'path';
 
@@ -25,19 +28,28 @@ function pluginDataDir(pluginRoot: string): string {
 export function resolvePluginServer(config: McpServerConfig): McpServerConfig {
   if (config.type === 'http') return config;
   const { pluginRoot, ...server } = config;
-  if (!pluginRoot) return config;
+  if (!pluginRoot) {
+    if (!server.cwd) return config;
+    const { pluginRoot: _root, cwd: _cwd, ...rest } = config;
+    return rest;
+  }
 
   const pluginData = pluginDataDir(pluginRoot);
   // Both replacement values are fixed container paths with no placeholders in
   // them, so a single substitution pass is inherently non-recursive.
   const expand = (value: string): string =>
     value.split('${PLUGIN_ROOT}').join(pluginRoot).split('${PLUGIN_DATA}').join(pluginData);
+  const resolveRel = (value: string): string =>
+    value.startsWith('./') ? path.posix.join(pluginRoot, value.slice(2)) : value;
 
   return {
     ...server,
-    command: server.command.startsWith('./')
-      ? path.posix.join(pluginRoot, server.command.slice(2))
-      : server.command,
+    command: resolveRel(server.command),
+    // cwd is expanded before the ./ join so a placeholder can never survive
+    // into the resolved path; command deliberately gets no expansion (the
+    // host rejects ${...} in commands at stamp time, and the runtime must
+    // not invent expansion the contract forbids).
+    ...(server.cwd ? { cwd: resolveRel(expand(server.cwd)) } : {}),
     args: (server.args ?? []).map(expand),
     env: {
       ...Object.fromEntries(Object.entries(server.env ?? {}).map(([key, value]) => [key, expand(value)])),

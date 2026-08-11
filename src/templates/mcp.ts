@@ -30,6 +30,21 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
+/**
+ * plugin-data subpaths declared as a server `cwd` (`${PLUGIN_DATA}/sub`).
+ * The stamp owns creating these: plugin-data is NanoClaw-managed writable
+ * space, so a declared nested cwd must exist before the server first
+ * launches or its `cd` fails and the server never boots. `./` and
+ * `${PLUGIN_ROOT}` cwds point into the shipped plugin instead — if those
+ * directories are missing, that is the plugin's bug.
+ */
+export function pluginDataCwdSubpaths(servers: Record<string, McpServerConfig>): string[] {
+  const prefix = '${PLUGIN_DATA}/';
+  return Object.values(servers).flatMap((s) =>
+    s.type !== 'http' && s.cwd?.startsWith(prefix) ? [s.cwd.slice(prefix.length)] : [],
+  );
+}
+
 export function readPluginMcp(pluginDir: string): { servers: Record<string, McpServerConfig>; report: string[] } {
   const report: string[] = [];
   const file = path.join(pluginDir, 'mcp.json');
@@ -121,12 +136,6 @@ function readServerEntry(name: string, entry: unknown, report: string[]): McpSer
     lintSecrets(name, 'header', server.headers ?? {}, report);
     return server;
   }
-
-  // The Agent SDK's stdio config takes no cwd; honoring the spec's "attempt
-  // the declared transport first" beats silently launching in the wrong
-  // directory, so declared-cwd servers are skipped (spec-legal per-server
-  // failure) rather than mis-launched.
-  if (server.cwd !== undefined) return "cwd is not supported by this install's provider runtime";
 
   // command is a single token: a bare executable name or a ./-relative path
   // resolved against PLUGIN_ROOT inside the container. No shell strings, no

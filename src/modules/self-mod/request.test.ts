@@ -289,6 +289,14 @@ describe('add_mcp_server validation', () => {
     expect(expectRejected()).toMatch(/valid environment variable name/);
   });
 
+  it('rejects a cwd on a raw payload before creating an approval', async () => {
+    // cwd would be silently dropped at runtime (no pluginRoot to resolve
+    // against), so an approver must never be asked to sign it.
+    await submitAddMcpServer({ name: 'ok', command: 'node', cwd: '${PLUGIN_DATA}/work' }, session);
+
+    expect(expectRejected()).toMatch(/only supported for plugin-shipped/);
+  });
+
   it('rejects a credential-bearing URL before creating an approval', async () => {
     await submitAddMcpServer({ name: 'bad', url: 'https://mcp.example.com/mcp?api_key=secret' }, session);
 

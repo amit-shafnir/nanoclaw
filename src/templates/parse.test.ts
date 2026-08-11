@@ -214,7 +214,8 @@ describe('parseTemplate', () => {
         { type: 'streamable-http', url: 'https://host.docker.internal/mcp' },
         /reaches the container host/,
       ],
-      ['declared cwd', { type: 'stdio', command: 'server', cwd: '${PLUGIN_DATA}/work' }, /cwd is not supported/],
+      ['cwd escaping the root', { type: 'stdio', command: 'server', cwd: './../evil' }, /cwd escapes the plugin root/],
+      ['free-form cwd', { type: 'stdio', command: 'server', cwd: '/etc' }, /cwd must be/],
       ['shell-string command', { type: 'stdio', command: 'sh -c evil' }, /single token/],
       ['placeholder in command', { type: 'stdio', command: '${PLUGIN_ROOT}/bin' }, /expansion/],
       ['command escaping the root', { type: 'stdio', command: './../evil' }, /escapes the plugin root/],
@@ -286,6 +287,22 @@ describe('parseTemplate', () => {
         url: 'https://mcp.example.com/mcp',
         headers: { Authorization: 'placeholder' },
       });
+      expect(tpl.report).toEqual([]);
+    });
+
+    it('accepts a well-formed cwd in each fixed form', () => {
+      writeManifest();
+      writeMcp({
+        rel: { type: 'stdio', command: 'server', cwd: './work' },
+        root: { type: 'stdio', command: 'server', cwd: '${PLUGIN_ROOT}/sub' },
+        data: { type: 'stdio', command: 'server', cwd: '${PLUGIN_DATA}' },
+      });
+
+      const tpl = parseTemplate(dir);
+
+      expect(tpl.mcpServers.rel).toMatchObject({ cwd: './work' });
+      expect(tpl.mcpServers.root).toMatchObject({ cwd: '${PLUGIN_ROOT}/sub' });
+      expect(tpl.mcpServers.data).toMatchObject({ cwd: '${PLUGIN_DATA}' });
       expect(tpl.report).toEqual([]);
     });
 

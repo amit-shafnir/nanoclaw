@@ -37,6 +37,7 @@ import type { AgentGroup } from '../types.js';
 import { groupSkillsOverlayDir, markPluginServers } from './create-agent.js';
 import { resolveLocalTemplate } from './local-dir.js';
 import { PLUGIN_MANIFEST_FILE } from './manifest.js';
+import { pluginDataCwdSubpaths } from './mcp.js';
 import { parseTemplate, type Template } from './parse.js';
 import { copyPluginDir } from './plugin-dir.js';
 
@@ -145,6 +146,17 @@ export function restampAgentFromTemplate(ref: string, agentGroupId: string, opts
       mkdirRealWithin(groupDir, path.join(groupDir, 'plugin-data', tpl.name));
     });
   }
+
+  // cwd dirs are plugin-data scaffold, not plugin files: create them even
+  // when plugins/<name> is byte-identical. An engine upgrade changes what the
+  // same template ref stamps (a cwd server the old engine skipped appears on
+  // restamp with no plugin-file diff), and the dir may also have been deleted
+  // since the last stamp. Idempotent; mkdirRealWithin creates parents.
+  ops.push(() => {
+    for (const sub of pluginDataCwdSubpaths(tpl.mcpServers)) {
+      mkdirRealWithin(groupDir, path.join(groupDir, 'plugin-data', tpl.name, sub));
+    }
+  });
 
   // --- persona -------------------------------------------------------------
   const livePersona = readGroupPersona(groupDir);

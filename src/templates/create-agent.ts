@@ -19,6 +19,7 @@ import { normalizeName } from '../modules/agent-to-agent/db/agent-destinations.j
 import { createScheduledTask, prepareScheduledTask } from '../modules/scheduling/create.js';
 import type { AgentGroup } from '../types.js';
 import { resolveLocalTemplate } from './local-dir.js';
+import { pluginDataCwdSubpaths } from './mcp.js';
 import { parseTemplate } from './parse.js';
 import { copyPluginDir } from './plugin-dir.js';
 
@@ -142,6 +143,9 @@ export function createAgentFromTemplate(ref: string, opts?: CreateAgentOptions):
   // container; only plugin-data/ is writable, matching the spec's contract.
   copyPluginDir(dir, path.join(groupDir, 'plugins', tpl.name));
   fs.mkdirSync(path.join(groupDir, 'plugin-data', tpl.name), { recursive: true });
+  for (const sub of pluginDataCwdSubpaths(tpl.mcpServers)) {
+    fs.mkdirSync(path.join(groupDir, 'plugin-data', tpl.name, sub), { recursive: true });
+  }
 
   updateContainerConfigJson(id, 'mcp_servers', markPluginServers(tpl.mcpServers, tpl.name));
 

@@ -308,9 +308,13 @@ authentication belongs in the credentials proxy. Non-secret query parameters
 container's host machine are rejected, and plain HTTP is allowed only for
 loopback hosts (`localhost`, `127.0.0.1`, `[::1]`). A stdio `command` is a
 single token: a bare executable name or a `./`-relative path resolved against
-the plugin root. An explicit `cwd` is validated against the spec's fixed
-forms but currently skipped with a notice (the provider runtime does not
-support it).
+the plugin root. An explicit `cwd` uses the spec's fixed forms (`./path`,
+`${PLUGIN_ROOT}[/path]`, `${PLUGIN_DATA}[/path]`; no `..` escapes) and is
+resolved to an absolute container path at runtime, so the server really
+starts there: codex sets it natively, and providers whose runtime cannot
+(claude, opencode) launch through a `cd`-then-`exec` shim. A `${PLUGIN_DATA}`
+subdirectory named as `cwd` is created at stamp time; `./`/`${PLUGIN_ROOT}`
+directories must exist in the shipped plugin.
 
 Credentials are held by the **credentials proxy** and injected into outbound
 HTTPS calls at the proxy boundary, matched by API host, at request time. The key

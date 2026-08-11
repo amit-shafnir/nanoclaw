@@ -44,7 +44,7 @@ function writeTemplate(manifestExtras: Record<string, unknown> = {}): void {
     JSON.stringify({
       $schema: MCP_SCHEMA_URL,
       mcpServers: {
-        hubspot: { type: 'stdio', command: 'npx', args: ['-y', '@hubspot/mcp-server'] },
+        hubspot: { type: 'stdio', command: 'npx', args: ['-y', '@hubspot/mcp-server'], cwd: '${PLUGIN_DATA}/state' },
         docs: { type: 'streamable-http', url: 'https://mcp.example.com/mcp' },
       },
     }),
@@ -108,6 +108,9 @@ describe('createAgentFromTemplate', () => {
     expect(fs.existsSync(path.join(pluginDir, 'plugin.json'))).toBe(true);
     expect(fs.existsSync(path.join(pluginDir, 'skills', 'widget', 'SKILL.md'))).toBe(true);
     expect(fs.existsSync(path.join(GROUPS_DIR, g.folder, 'plugin-data', 'sdr'))).toBe(true);
+    // hubspot declares cwd ${PLUGIN_DATA}/state: the stamp pre-creates it so
+    // the server's first launch doesn't die on a missing directory.
+    expect(fs.existsSync(path.join(GROUPS_DIR, g.folder, 'plugin-data', 'sdr', 'state'))).toBe(true);
   });
 
   it('records the ownership marker on every server and pluginRoot on stdio only', () => {
