@@ -25,13 +25,8 @@ import { findTaskSessions } from '../db/sessions.js';
 import { resolveGroupFolderPath } from '../group-folder.js';
 import { PERSONA_PREPEND_FILE, readGroupPersona } from '../group-persona.js';
 import { log } from '../log.js';
-import {
-  createScheduledTask,
-  prepareScheduledTask,
-  taskNameSlug,
-  type PreparedScheduledTask,
-} from '../modules/scheduling/create.js';
-import { deleteTask, updateTask } from '../modules/scheduling/db.js';
+import { createScheduledTask, taskNameSlug } from '../modules/scheduling/create.js';
+import { deleteTask, parseTaskContent, updateTask } from '../modules/scheduling/db.js';
 import { inboundDbPath, withInboundDb } from '../session-manager.js';
 import type { AgentGroup } from '../types.js';
 import { groupSkillsOverlayDir, markPluginServers } from './create-agent.js';
@@ -40,6 +35,7 @@ import { PLUGIN_MANIFEST_FILE } from './manifest.js';
 import { pluginDataCwdSubpaths } from './mcp.js';
 import { parseTemplate, type Template } from './parse.js';
 import { copyPluginDir } from './plugin-dir.js';
+import { prepareTemplateTasks } from './tasks.js';
 
 export interface RestampChange {
   surface: 'plugin' | 'persona' | 'context' | 'skill' | 'mcp-server' | 'task';
@@ -100,43 +96,13 @@ export function restampAgentFromTemplate(ref: string, agentGroupId: string, opts
     throw new Error(`Cannot read the previously stamped plugin at plugins/${tpl.name}: ${message}`, { cause: err });
   }
 
-  // Task ids embed a truncated name slug; two names colliding on it would
-  // silently fight over one live series, so refuse the template up front.
-  const taskSlugs = new Map<string, string>();
-  for (const task of tpl.tasks) {
-    const slug = taskNameSlug(task.name);
-    if (!slug) {
-      throw new Error(`Template task ${task.source}: name "${task.name}" produces an empty id slug; rename it`);
-    }
-    const clash = taskSlugs.get(slug);
-    if (clash !== undefined) {
-      throw new Error(`Template tasks "${clash}" and "${task.name}" collide on id slug "${slug}"; rename one`);
-    }
-    taskSlugs.set(slug, task.name);
-  }
-
-  // All template tasks are validated up front so nothing below can half-apply
-  // over an invalid task file (mirrors createAgentFromTemplate).
-  const tz = resolveGroupTimezone(group.id);
-  const preparedTasks = new Map<string, PreparedScheduledTask>(
-    tpl.tasks.map((task) => {
-      try {
-        return [
-          task.name,
-          prepareScheduledTask({
-            name: task.name,
-            prompt: task.prompt,
-            recurrence: task.schedule,
-            script: task.script,
-            timezone: tz,
-          }),
-        ];
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        throw new Error(`Invalid template task ${task.source}: ${message}`, { cause: err });
-      }
-    }),
-  );
+  // All template tasks are validated and prepared up front (slug uniqueness
+  // included — the shared gate with createAgentFromTemplate) so nothing below
+  // can half-apply over an invalid task file. NEW-side only: the old parsed
+  // copy is tolerated as-is, so an already-stamped bad template stays
+  // restampable to a fixed version.
+  const preparedTasks = prepareTemplateTasks(tpl.tasks, resolveGroupTimezone(group.id));
+  const newTaskSlugs = new Set(tpl.tasks.map((task) => taskNameSlug(task.name)));
 
   const changes: RestampChange[] = [];
   const ops: Array<() => void> = [];
@@ -407,7 +373,7 @@ export function restampAgentFromTemplate(ref: string, agentGroupId: string, opts
     });
   }
   for (const [slug, oldTask] of oldTasks) {
-    if (taskSlugs.has(slug)) continue;
+    if (newTaskSlugs.has(slug)) continue;
     const match = findTaskSeriesBySlug(group.id, slug);
     // Nothing to remove when the series is already dead history.
     if (match === undefined || (!match.live && match.recurrence === null)) continue;
@@ -538,24 +504,15 @@ function findTaskSeriesBySlug(agentGroupId: string, slug: string): TaskSeriesMat
         .get(pattern),
     ) as { series_id: string; status: string; recurrence: string | null; content: string } | undefined;
     if (!row) continue;
-    let prompt = '';
-    let script: string | null = null;
-    try {
-      const parsed = JSON.parse(row.content) as Record<string, unknown>;
-      prompt = typeof parsed.prompt === 'string' ? parsed.prompt : '';
-      script = typeof parsed.script === 'string' ? parsed.script : null;
-      // eslint-disable-next-line no-catch-all/no-catch-all -- LEGACY-COMPAT(v1-tasks): plain-string content predating the JSON envelope
-    } catch {
-      prompt = row.content;
-    }
+    const content = parseTaskContent(row.content);
     return {
       sessionId: session.id,
       seriesId: row.series_id,
       live: row.status === 'pending' || row.status === 'paused',
       status: row.status,
       recurrence: row.recurrence,
-      prompt,
-      script,
+      prompt: content.prompt,
+      script: content.script,
     };
   }
   return undefined;

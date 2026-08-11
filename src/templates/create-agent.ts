@@ -16,10 +16,11 @@ import { assertValidGroupFolder, resolveGroupFolderPath } from '../group-folder.
 import { stageGroupPersona } from '../group-persona.js';
 import { log } from '../log.js';
 import { normalizeName } from '../modules/agent-to-agent/db/agent-destinations.js';
-import { createScheduledTask, prepareScheduledTask } from '../modules/scheduling/create.js';
+import { createScheduledTask } from '../modules/scheduling/create.js';
 import type { AgentGroup } from '../types.js';
 import { resolveLocalTemplate } from './local-dir.js';
 import { pluginDataCwdSubpaths } from './mcp.js';
+import { prepareTemplateTasks } from './tasks.js';
 import { parseTemplate } from './parse.js';
 import { copyPluginDir } from './plugin-dir.js';
 
@@ -93,20 +94,7 @@ export function createAgentFromTemplate(ref: string, opts?: CreateAgentOptions):
   // config row below, BEFORE tasks are created, so a template task's first
   // run and its later re-arms agree on the same zone.
   const timezone = opts?.timezone && isValidTimezone(opts.timezone) ? opts.timezone : undefined;
-  const tasks = tpl.tasks.map((task) => {
-    try {
-      return prepareScheduledTask({
-        name: task.name,
-        prompt: task.prompt,
-        recurrence: task.schedule,
-        script: task.script,
-        timezone: timezone ?? TIMEZONE,
-      });
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      throw new Error(`Invalid template task ${task.source}: ${message}`, { cause: err });
-    }
-  });
+  const tasks = prepareTemplateTasks(tpl.tasks, timezone ?? TIMEZONE);
 
   const id = randomUUID();
   // Display-name fallback chain: explicit option → manifest extension
@@ -163,7 +151,7 @@ export function createAgentFromTemplate(ref: string, opts?: CreateAgentOptions):
 
   // Template tasks require explicit activation. The later welcome flow can
   // present these exact paused tasks and resume only the ones the user accepts.
-  for (const task of tasks) createScheduledTask(id, task, { status: 'paused' });
+  for (const task of tasks.values()) createScheduledTask(id, task, { status: 'paused' });
 
   for (const line of tpl.report) log.warn('Template reader notice', { ref, notice: line });
 
