@@ -65,7 +65,15 @@ export interface RestampResult {
  */
 export function groupsCarryingPlugin(ref: string): AgentGroup[] {
   const dir = resolveLocalTemplate(ref);
-  const manifest = parsePluginManifest(JSON.parse(fs.readFileSync(path.join(dir, PLUGIN_MANIFEST_FILE), 'utf-8')));
+  const manifestPath = path.join(dir, PLUGIN_MANIFEST_FILE);
+  // The fast path reads ONLY a regular manifest file. Anything else — absent
+  // (pre-plugin layout), or a symlink — goes through the full parse so the
+  // reader's own errors surface (the migration pointer, symlink rejection)
+  // instead of a raw ENOENT or a followed link.
+  if (!fs.existsSync(manifestPath) || !fs.lstatSync(manifestPath).isFile()) {
+    parseTemplate(dir);
+  }
+  const manifest = parsePluginManifest(JSON.parse(fs.readFileSync(manifestPath, 'utf-8')));
   return getAllAgentGroups().filter((g) =>
     fs.existsSync(path.join(resolveGroupFolderPath(g.folder), 'plugins', manifest.name, PLUGIN_MANIFEST_FILE)),
   );

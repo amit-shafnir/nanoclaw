@@ -124,6 +124,19 @@ describe('ncl groups create --template on an already-stamped plugin', () => {
     if (applied.ok) expect(applied.data).toMatchObject({ applied: true, group: { id: groupId } });
   });
 
+  it('surfaces the migration error for a pre-plugin template on the CLI path', async () => {
+    // Regression: the carriage probe must not die on a raw ENOENT before the
+    // reader's friendly error — this is the exact command the [BREAKING]
+    // changelog entry points users at.
+    const legacy = path.join(TEST_ROOT, 'templates', 'legacy');
+    fs.mkdirSync(path.join(legacy, 'context'), { recursive: true });
+    fs.writeFileSync(path.join(legacy, 'context', 'instructions.md'), 'old layout\n');
+
+    const res = await run('groups-create', { template: 'legacy' });
+    expect(res.ok).toBe(false);
+    if (!res.ok) expect(res.error.message).toMatch(/predates the plugin format/);
+  });
+
   it('stamps a second agent with --new, then requires --id while both exist', async () => {
     const second = await run('groups-create', { template: 'sdr', new: true });
     expect(second.ok).toBe(true);
