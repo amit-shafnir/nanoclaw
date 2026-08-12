@@ -364,10 +364,12 @@ config, put the literal **`"placeholder"`** there to satisfy the boot check:
 The server starts; its real outbound calls are still authenticated by the
 credentials proxy. **Never put a real key in `env` or `headers`**: stamping
 rejects values that match known credential formats, and `"placeholder"` is the
-one value the lint always accepts. The same convention covers `headers` on
-remote servers — stamp with a placeholder, then have the operator set the real
-value with `ncl groups config add-mcp-server --headers` if the endpoint truly
-needs a static header.
+one value the lint always accepts. Static header credentials on a
+plugin-stamped server are unsupported by design — the ownership guard refuses
+`add-mcp-server`/`remove-mcp-server` for plugin-owned names, so there is no
+after-the-fact edit path. Authentication belongs in the credentials proxy; if
+an endpoint truly needs a static header, the operator adds a *separately
+named*, user-owned server with `ncl groups config add-mcp-server --headers`.
 
 ### Approval-gating sensitive actions
 

@@ -166,7 +166,10 @@ function readServerEntry(name: string, entry: unknown, report: string[]): McpSer
 function lintSecrets(server: string, kind: 'env' | 'header', values: Record<string, string>, report: string[]): void {
   for (const [key, value] of Object.entries(values)) {
     if (value === PLACEHOLDER_VALUE) continue;
-    if (SECRET_VALUE_RE.test(value)) {
+    // SECRET_VALUE_RE is ^-anchored; strip an auth-scheme prefix so
+    // "Bearer sk-…" (the common real-world header shape) still matches.
+    const bare = value.replace(/^(Bearer|Token|Basic)\s+/i, '');
+    if (SECRET_VALUE_RE.test(bare)) {
       throw new Error(
         `${kind} "${key}" looks like a real credential; ship the literal "${PLACEHOLDER_VALUE}" instead ` +
           '(operators supply real values after stamping)',

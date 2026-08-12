@@ -320,6 +320,34 @@ describe('parseTemplate', () => {
       expect(() => parseTemplate(dir)).toThrow(/looks like a real credential/);
     });
 
+    it('rejects a known secret format behind an auth-scheme prefix (Bearer sk-…)', () => {
+      writeManifest();
+      writeMcp({
+        api: {
+          type: 'streamable-http',
+          url: 'https://mcp.example.com/mcp',
+          headers: { Authorization: 'Bearer sk-proj-AbC123RealLookingKey456' },
+        },
+      });
+      expect(() => parseTemplate(dir)).toThrow(/looks like a real credential/);
+    });
+
+    it('keeps "Bearer placeholder" on the warn-only path', () => {
+      writeManifest();
+      writeMcp({
+        api: {
+          type: 'streamable-http',
+          url: 'https://mcp.example.com/mcp',
+          headers: { Authorization: 'Bearer placeholder' },
+        },
+      });
+
+      const tpl = parseTemplate(dir);
+
+      expect(tpl.mcpServers.api).toBeDefined();
+      expect(tpl.report.join('\n')).toMatch(/Authorization.*placeholder convention/);
+    });
+
     it('warns (but keeps the server) on a secret-shaped key with an unrecognized value', () => {
       writeManifest();
       writeMcp({ crm: { type: 'stdio', command: 'server', env: { EXA_API_KEY: 'onecli-managed' } } });
