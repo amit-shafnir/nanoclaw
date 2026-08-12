@@ -105,7 +105,7 @@ registerResource({
     create: {
       access: 'approval',
       description:
-        'Create (or return the existing) agent group with its container config. Idempotent on --folder. ' +
+        'Create (or return the existing) agent group with its container config. Idempotent on --folder (bare creates only; --folder cannot be combined with --template). ' +
         'With --template <ref>, stamp from a local agent plugin under templates/ (skills + MCP servers ' +
         '+ optional persona, context, and paused recurring tasks). When a group already carries the plugin, ' +
         'this instead shows the in-place update plan for it — every plugin-owned surface that would change, ' +
@@ -118,6 +118,14 @@ registerResource({
       handler: async (args) => {
         const timezone = parseTimezoneFlag(args.timezone) ?? undefined;
         if (args.template) {
+          // Two identity models: a bare group IS its folder; a templated group
+          // IS its plugin. --folder belongs to the first and would be silently
+          // ignored here, so reject the mix instead of surprising the caller.
+          if (args.folder) {
+            throw new Error(
+              "--folder applies only to bare creates; a templated group's folder derives from the agent name (--name)",
+            );
+          }
           const ref = String(args.template);
           // Same plugin already stamped → in-place update (dry run without
           // --yes), never a duplicate agent. --new opts out; agent callers

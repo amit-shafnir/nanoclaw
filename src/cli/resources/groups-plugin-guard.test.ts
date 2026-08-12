@@ -124,6 +124,12 @@ describe('ncl groups create --template on an already-stamped plugin', () => {
     if (applied.ok) expect(applied.data).toMatchObject({ applied: true, group: { id: groupId } });
   });
 
+  it('rejects --folder combined with --template instead of silently ignoring it', async () => {
+    const res = await run('groups-create', { template: 'sdr', folder: 'custom-folder' });
+    expect(res.ok).toBe(false);
+    if (!res.ok) expect(res.error.message).toMatch(/--folder applies only to bare creates/);
+  });
+
   it('surfaces the migration error for a pre-plugin template on the CLI path', async () => {
     // Regression: the carriage probe must not die on a raw ENOENT before the
     // reader's friendly error — this is the exact command the [BREAKING]
