@@ -948,7 +948,7 @@ const INSTALLABLE_PROVIDERS = [
 async function runTemplateSetup(): Promise<void> {
   const preset = process.env.NANOCLAW_TEMPLATE_PATH?.trim();
   if (preset) {
-    if (listTemplatesFromDir(TEMPLATES_DIR).some((template) => template.ref === preset)) {
+    if (listLocalTemplates().some((template) => template.ref === preset)) {
       applyTemplatePick(preset);
       p.log.success(`Using template "${preset}".`);
       return;
@@ -996,6 +996,18 @@ function clearTemplatePick(): void {
   upsertEnvVar('NANOCLAW_TEMPLATE_PATH', '');
 }
 
+// listTemplatesFromDir throws the migration error for a pre-plugin layout.
+// A stale local templates/ must not abort an otherwise-working install:
+// surface the message as a warning and treat the dir as empty.
+function listLocalTemplates(): TemplateEntry[] {
+  try {
+    return listTemplatesFromDir(TEMPLATES_DIR);
+  } catch (err) {
+    p.log.warn(err instanceof Error ? err.message : String(err));
+    return [];
+  }
+}
+
 async function pickLibraryTemplate(): Promise<string | undefined> {
   const spinner = p.spinner();
   spinner.start('Fetching the template library…');
@@ -1022,7 +1034,7 @@ async function pickLibraryTemplate(): Promise<string | undefined> {
 
     const destination = path.join(TEMPLATES_DIR, ref);
     if (fs.existsSync(destination)) {
-      if (!listTemplatesFromDir(TEMPLATES_DIR).some((template) => template.ref === ref)) {
+      if (!listLocalTemplates().some((template) => template.ref === ref)) {
         p.log.warn(`Can't install "${ref}": that path already exists but isn't a valid template.`);
         return undefined;
       }
@@ -1044,7 +1056,7 @@ async function pickLibraryTemplate(): Promise<string | undefined> {
 }
 
 async function pickLocalTemplate(): Promise<string | undefined> {
-  const templates = listTemplatesFromDir(TEMPLATES_DIR).filter((template) => template.ref !== '.');
+  const templates = listLocalTemplates().filter((template) => template.ref !== '.');
   if (templates.length === 0) {
     p.log.info(`No local templates in ${TEMPLATES_DIR}.`);
     return undefined;
