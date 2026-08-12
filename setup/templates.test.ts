@@ -38,7 +38,14 @@ import { dispatch } from '../src/cli/dispatch.js';
 // Side-effect import: registers the `groups-*` commands for the contract test.
 import '../src/cli/resources/groups.js';
 import type { AgentGroup } from '../src/types.js';
-import { copyTemplate, installTemplateAgent, listTemplatesFromDir, type TemplateReplacePlan } from './templates.js';
+import {
+  applyTemplatePick,
+  clearTemplatePick,
+  copyTemplate,
+  installTemplateAgent,
+  listTemplatesFromDir,
+  type TemplateReplacePlan,
+} from './templates.js';
 
 describe('setup template library', () => {
   let root: string;
@@ -160,7 +167,10 @@ describe('setup template library', () => {
     ]);
   });
 
-  it('cancels when the update plan is declined', async () => {
+  // Declining the reset keeps the customized group untouched but still
+  // returns it, so the wizard wires it as-is instead of orphaning it. No
+  // apply, no provider update, no restart — declining means zero mutations.
+  it('keeps the group untouched (and usable) when the update plan is declined', async () => {
     const stamped: AgentGroup = {
       id: 'ag-old',
       name: 'SDR',
@@ -172,6 +182,7 @@ describe('setup template library', () => {
     const result = await installTemplateAgent({
       ref: 'sales/sdr',
       name: 'SDR',
+      provider: 'claude',
       runNcl: async (command) => {
         calls.push(command);
         return { applied: false, group: stamped, changes: [], note: 'DRY RUN' };
@@ -179,7 +190,7 @@ describe('setup template library', () => {
       confirmReplace: async () => false,
     });
 
-    expect(result).toEqual({ status: 'cancelled' });
+    expect(result).toEqual({ status: 'kept', group: stamped });
     expect(calls).toEqual(['groups-create']);
   });
 
@@ -200,6 +211,32 @@ describe('setup template library', () => {
     expect(skill).toContain('ncl groups list --json');
     expect(skill).toContain('ncl wirings list --json');
     expect(skill).toContain('--agent-group-id "${AGENT_GROUP_ID}"');
+  });
+});
+
+// The pick must round-trip through BOTH carriers (process.env for this run,
+// .env for the next) — a rerun over a partial install resumes from the .env
+// copy. Runs against a scratch cwd so the checkout's .env is never touched.
+describe('template pick persistence', () => {
+  it('applyTemplatePick and clearTemplatePick round-trip both carriers', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tpl-pick-'));
+    const prevCwd = process.cwd();
+    const prevEnv = process.env.NANOCLAW_TEMPLATE_PATH;
+    process.chdir(root);
+    try {
+      applyTemplatePick('sales/sdr');
+      expect(process.env.NANOCLAW_TEMPLATE_PATH).toBe('sales/sdr');
+      expect(fs.readFileSync(path.join(root, '.env'), 'utf8')).toMatch(/^NANOCLAW_TEMPLATE_PATH=sales\/sdr$/m);
+
+      clearTemplatePick();
+      expect(process.env.NANOCLAW_TEMPLATE_PATH).toBeUndefined();
+      expect(fs.readFileSync(path.join(root, '.env'), 'utf8')).toMatch(/^NANOCLAW_TEMPLATE_PATH=$/m);
+    } finally {
+      process.chdir(prevCwd);
+      if (prevEnv === undefined) delete process.env.NANOCLAW_TEMPLATE_PATH;
+      else process.env.NANOCLAW_TEMPLATE_PATH = prevEnv;
+      fs.rmSync(root, { recursive: true, force: true });
+    }
   });
 });
 

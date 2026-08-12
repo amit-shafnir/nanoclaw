@@ -44,6 +44,7 @@ describe('runChannelSkill adapter (Option A)', () => {
       if (c.includes('conversations.open')) return 'slack:D0SLACK\n';
     };
     const wired: Array<Record<string, unknown>> = [];
+    let pickCleared = 0;
 
     await runChannelSkill('slack', 'Bob Smith', {
       projectRoot: root,
@@ -59,6 +60,7 @@ describe('runChannelSkill adapter (Option A)', () => {
         wired.push(a);
         return true;
       },
+      clearTemplatePick: () => pickCleared++,
     });
 
     // the channel-specific resolve ran
@@ -77,6 +79,9 @@ describe('runChannelSkill adapter (Option A)', () => {
     });
     // the adapter no longer emits any ncl wiring itself — that's init-first-agent's job
     expect(cmds.some((c) => c.startsWith('ncl '))).toBe(false);
+    // clears the template pick exactly when the wire consumed the stamped
+    // agent — goes red if the post-wire clear in run-channel-skill.ts is removed
+    expect(pickCleared).toBe(1);
   });
 
   // Teams wires inline only when a fresh create resolved the owner DM
@@ -438,6 +443,7 @@ describe('runChannelSkill adapter (Option A)', () => {
     );
 
     const wired: Array<Record<string, unknown>> = [];
+    let pickCleared = 0;
     await runChannelSkill(wireChannel, 'Dan Mill', {
       projectRoot: root,
       exec: (c) => {
@@ -452,6 +458,7 @@ describe('runChannelSkill adapter (Option A)', () => {
         wired.push(a);
         return true;
       },
+      clearTemplatePick: () => pickCleared++,
     });
 
     expect(wired).toHaveLength(1);
@@ -463,6 +470,9 @@ describe('runChannelSkill adapter (Option A)', () => {
       agentName: 'Nano',
       role: 'owner',
     });
+    // no template pick in play (NANOCLAW_TEMPLATE_AGENT_ID unset): a fresh-agent
+    // wire must leave the persisted pick alone
+    expect(pickCleared).toBe(0);
   });
 
   // The engine reads `.claude/skills/add-<channel>/SKILL.md` relative to cwd (the

@@ -77,6 +77,8 @@ import { isValidTimezone } from '../src/timezone.js';
 import { DEFAULT_AGENT_PROVIDER, TEMPLATES_DIR } from '../src/config.js';
 import { SocketTransport } from '../src/cli/socket-client.js';
 import {
+  applyTemplatePick,
+  clearTemplatePick,
   cloneRegistry,
   copyTemplate,
   installTemplateAgent,
@@ -215,9 +217,13 @@ async function main(): Promise<void> {
   // process restarts. Without this, a run that aborted after the pick leaves a
   // partial install whose registered groups silently gate the picker off on
   // rerun, and the pick is lost.
+  let savedPickBridged = false;
   if (!process.env.NANOCLAW_TEMPLATE_PATH?.trim()) {
     const savedPick = readEnvKey('NANOCLAW_TEMPLATE_PATH')?.trim();
-    if (savedPick) process.env.NANOCLAW_TEMPLATE_PATH = savedPick;
+    if (savedPick) {
+      process.env.NANOCLAW_TEMPLATE_PATH = savedPick;
+      savedPickBridged = true;
+    }
   }
   // Existing installs do not get an unsolicited first-agent picker, but an
   // explicit --template-path is always honoured.
@@ -225,7 +231,7 @@ async function main(): Promise<void> {
     !isResume &&
     (process.env.NANOCLAW_TEMPLATE_PATH?.trim() || !detectRegisteredGroups(process.cwd()))
   ) {
-    await runTemplateSetup();
+    await runTemplateSetup(savedPickBridged);
   }
 
   if (!skip.has('container')) {
@@ -945,16 +951,43 @@ const INSTALLABLE_PROVIDERS = [
   { value: 'codex', label: 'Codex', hint: 'OpenAI — ChatGPT subscription or API key' },
 ] as const;
 
-async function runTemplateSetup(): Promise<void> {
+// `pickSavedByPreviousRun`: the .env bridge promoted a pick persisted by a
+// PREVIOUS run. That pick is a default to confirm, not a decision to replay:
+// the operator may be rerunning precisely to change it. In-process presets
+// (--template-path, the Advanced screen, self re-execs, an exported env var)
+// keep the silent skip.
+async function runTemplateSetup(pickSavedByPreviousRun: boolean): Promise<void> {
   const preset = process.env.NANOCLAW_TEMPLATE_PATH?.trim();
   if (preset) {
     if (listLocalTemplates().some((template) => template.ref === preset)) {
-      applyTemplatePick(preset);
-      p.log.success(`Using template "${preset}".`);
-      return;
+      if (!pickSavedByPreviousRun) {
+        applyTemplatePick(preset);
+        p.log.success(`Using template "${preset}".`);
+        return;
+      }
+      const resume = ensureAnswer(
+        await p.confirm({
+          message: `Continue with template "${preset}" from the previous run?`,
+          initialValue: true,
+        }),
+      );
+      setupLog.userInput('template_resume', String(resume));
+      if (resume) {
+        applyTemplatePick(preset);
+        p.log.success(`Using template "${preset}".`);
+        return;
+      }
+      clearTemplatePick();
+      p.log.info(
+        `If that run already stamped an agent from "${preset}", it is kept — pick it again anytime, or wire it later with /init-first-agent.`,
+      );
+    } else {
+      clearTemplatePick();
+      p.log.warn(`Template "${preset}" not found under ${TEMPLATES_DIR} — pick one below.`);
+      p.log.info(
+        `If a previous run already stamped an agent from "${preset}", it is kept — wire it later with /init-first-agent.`,
+      );
     }
-    clearTemplatePick();
-    p.log.warn(`Template "${preset}" not found under ${TEMPLATES_DIR} — pick one below.`);
   }
 
   for (;;) {
@@ -979,21 +1012,6 @@ async function runTemplateSetup(): Promise<void> {
     p.log.success(`Template "${ref}" selected.`);
     return;
   }
-}
-
-// The pick lives in process.env for this run AND in .env for the next one:
-// the wizard re-execs itself (`sg docker`, fail-retry) and a rerun over a
-// partial install must not lose the choice. Cleared on every terminal path
-// except failure — there it survives so `bash nanoclaw.sh` retries the same
-// template.
-function applyTemplatePick(ref: string): void {
-  process.env.NANOCLAW_TEMPLATE_PATH = ref;
-  upsertEnvVar('NANOCLAW_TEMPLATE_PATH', ref);
-}
-
-function clearTemplatePick(): void {
-  delete process.env.NANOCLAW_TEMPLATE_PATH;
-  upsertEnvVar('NANOCLAW_TEMPLATE_PATH', '');
 }
 
 // listTemplatesFromDir throws the migration error for a pre-plugin layout.
@@ -1128,18 +1146,23 @@ async function installSelectedTemplateAgent(provider?: string): Promise<void> {
       },
     });
 
-    if (result.status === 'cancelled') {
-      clearTemplatePick();
-      setupLog.step('template-agent', 'skipped', Date.now() - start, {
+    if (result.status === 'kept') {
+      process.env.NANOCLAW_TEMPLATE_AGENT_ID = result.group.id;
+      process.env.NANOCLAW_AGENT_NAME = result.group.name;
+      setupLog.step('template-agent', 'success', Date.now() - start, {
         ref,
-        reason: 'replacement-declined',
+        agent_group_id: result.group.id,
+        kept: true,
       });
-      phEmit('step_completed', { step: 'template-agent', status: 'skipped' });
-      p.log.info('Template installation cancelled. Continuing without it.');
+      phEmit('step_completed', { step: 'template-agent', status: 'success' });
+      p.log.success(`Keeping agent "${result.group.name}" as-is — local edits preserved. Wiring it unchanged.`);
       return;
     }
 
-    clearTemplatePick();
+    // The pick is NOT cleared here: it must survive until the wire that
+    // consumes the stamped agent succeeds (run-channel-skill), or a rerun
+    // after a failed channel step silently wires a fresh vanilla agent while
+    // this one sits orphaned. Contract comment: setup/templates.ts.
     process.env.NANOCLAW_TEMPLATE_AGENT_ID = result.group.id;
     process.env.NANOCLAW_AGENT_NAME = result.group.name;
     setupLog.step('template-agent', 'success', Date.now() - start, {

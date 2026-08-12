@@ -6,8 +6,28 @@ import path from 'path';
 
 import { resolveLocalTemplate } from '../src/templates/local-dir.js';
 import type { AgentGroup } from '../src/types.js';
+import { upsertEnvVar } from './set-env.js';
 
 export const DEFAULT_TEMPLATES_SOURCE = 'https://github.com/nanocoai/nanoclaw-templates';
+
+// The template pick lives in process.env for this run AND in .env for the
+// next: the wizard re-execs itself (`sg docker`, fail-retry) and a rerun over
+// a partial install must not lose the choice. It deliberately survives stamp
+// success, channel skip, and any failure — only the wire that consumes the
+// stamped agent (run-channel-skill), the operator declining it, or an invalid
+// preset clears it. The agent group id itself is never persisted: each run
+// re-derives it from the pick (`groups create --template` resolves the
+// existing group through its plugin carrier — groupsCarryingPlugin — instead
+// of creating a duplicate), so a stale id can never override a fresh choice.
+export function applyTemplatePick(ref: string): void {
+  process.env.NANOCLAW_TEMPLATE_PATH = ref;
+  upsertEnvVar('NANOCLAW_TEMPLATE_PATH', ref);
+}
+
+export function clearTemplatePick(): void {
+  delete process.env.NANOCLAW_TEMPLATE_PATH;
+  upsertEnvVar('NANOCLAW_TEMPLATE_PATH', '');
+}
 
 export interface TemplateEntry {
   ref: string;
@@ -24,7 +44,8 @@ type RunNcl = (command: string, args: Record<string, unknown>) => Promise<unknow
 export type TemplateAgentInstallResult =
   | { status: 'installed'; group: AgentGroup }
   | { status: 'updated'; group: AgentGroup }
-  | { status: 'cancelled' };
+  /** Update plan declined: the stamped group is untouched but still usable. */
+  | { status: 'kept'; group: AgentGroup };
 
 /** One plugin-owned surface from the dry-run update plan `groups create --template` returns. */
 export interface TemplateChange {
@@ -143,7 +164,10 @@ export async function installTemplateAgent(options: TemplateAgentInstallOptions)
   let group: AgentGroup;
   const plan = parseReplacePlan(first);
   if (plan) {
-    if (!(await options.confirmReplace(plan))) return { status: 'cancelled' };
+    // Declining the reset means "don't touch my edits", not "abandon my
+    // agent": the untouched group is returned so the wizard can wire it as-is
+    // (provider update and restart are skipped — those are mutations too).
+    if (!(await options.confirmReplace(plan))) return { status: 'kept', group: plan.group };
     const applied = parseReplacePlan(
       await options.runNcl('groups-create', { template: options.ref, id: plan.group.id, yes: true }),
     );
