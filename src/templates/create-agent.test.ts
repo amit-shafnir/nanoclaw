@@ -89,6 +89,9 @@ describe('createAgentFromTemplate', () => {
     expect(prepend).toBe('You are an SDR agent.\n');
     expect(fs.existsSync(path.join(groupDir, '.seed.md'))).toBe(false);
     expect(report).toEqual([]);
+    // Every creation path prefixes ids with ag-; ag- consumers (uninstaller
+    // classification, dashboard session filters) rely on it.
+    expect(g.id).toMatch(/^ag-/);
   });
 
   it('copies template skills into the group-private Claude-plane skills dir', () => {
