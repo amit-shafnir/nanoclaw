@@ -109,8 +109,10 @@ Notes:
 - **No provider, model, effort, or packages in a template.** Those are set on
   the agent later via `ncl groups config update`. The runtime defaults to the
   install's configured provider.
-- **The persona is optional to the loader** but the first-party registry
-  requires one by policy (its CI enforces it). Keep `instructions.md` focused
+- **The persona is optional**, to the loader and to the first-party registry
+  alike (registry CI only rejects an `instructions.md` that exists but is
+  empty). Without one, the stamped agent uses NanoClaw's default project doc.
+  Keep `instructions.md` focused
   (under ~200 lines): it's always in the agent's prompt, and some providers
   cap that doc (Codex ~32 KB), so an over-long persona gets truncated. Put
   bulk material in `skills/` or extra context files instead.
