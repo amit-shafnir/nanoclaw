@@ -96,7 +96,7 @@ export function createAgentFromTemplate(ref: string, opts?: CreateAgentOptions):
   const timezone = opts?.timezone && isValidTimezone(opts.timezone) ? opts.timezone : undefined;
   const tasks = prepareTemplateTasks(tpl.tasks, timezone ?? TIMEZONE);
 
-  const id = randomUUID();
+  const id = `ag-${randomUUID()}`;
   // Display-name fallback chain: explicit option → manifest extension
   // agentName → plugin folder leaf (exactly the pre-plugin derivation).
   const name = opts?.name ?? tpl.agentName ?? path.basename(dir);
