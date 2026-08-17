@@ -1,6 +1,3 @@
-import fs from 'fs';
-import path from 'path';
-
 // This module never imports the runtime contract (provider-contracts/codex.ts):
 // registration is two-step, so it compiles and runs on a core that predates the
 // contract seam. The contract attaches itself through registerProviderContract.
@@ -393,7 +390,6 @@ async function* runOneTurn(
       cwd,
     });
     setActiveTurn(turnId);
-    const imagesBefore = listGeneratedImages(threadId);
     if (isAborted()) return;
 
     while (true) {
@@ -421,12 +417,6 @@ async function* runOneTurn(
       throw state.error;
     }
 
-    for (const imagePath of listGeneratedImages(threadId)) {
-      if (!imagesBefore.has(imagePath)) {
-        yield { type: 'file', path: imagePath };
-      }
-    }
-
     yield { type: 'result', text: resultText || null };
   } finally {
     clearTimeout(timer);
@@ -436,22 +426,6 @@ async function* runOneTurn(
     if (idx >= 0) server.notificationHandlers.splice(idx, 1);
     const exitIdx = server.exitHandlers.indexOf(onServerExit);
     if (exitIdx >= 0) server.exitHandlers.splice(exitIdx, 1);
-  }
-}
-
-/**
- * Codex's built-in image generation saves into CODEX_HOME/generated_images/
- * <threadId>/ — its native client renders those to the user, so the model
- * believes delivery already happened and won't send_file them. The runner
- * must deliver them itself: snapshot the dir at turn start, emit a `file`
- * event for anything new at turn end.
- */
-function listGeneratedImages(threadId: string): Set<string> {
-  const dir = path.join(process.env.CODEX_HOME || '/home/node/.codex', 'generated_images', threadId);
-  try {
-    return new Set(fs.readdirSync(dir).map((f) => path.join(dir, f)));
-  } catch {
-    return new Set();
   }
 }
 
