@@ -23,10 +23,10 @@ The right frame is: does this agent need its own memory and context that builds 
 
 ### Templates
 
-- When creation comes up, offer in one line — "plain, or stamped from a template?" — without running any listing yet.
-- Once the user shows interest: `ncl templates list` (local first, own section), then `ncl templates list --registry --category <c>` for the public library. Names and descriptions only, never versions.
-- Pass the chosen ref as `template: "sales/sdr"`. If the user already named one, skip the ceremony. Plain create stays the default.
-- A template supplies the persona: `instructions` passed alongside `template` are **ignored**. Stamp first, customize after (message the agent, or edit its `instructions.prepend.md`).
+- If relevant, you can offer to create an agent from a predefined template.
+- If the user shows interest: `ncl templates list` (local first), then `ncl templates list --registry` for the public library.
+- Pass the chosen ref as `template: "sales/sdr"`.
+- A template supplies the persona: `instructions` passed alongside `template` are **ignored**.
 
 ### Writing good `instructions`
 
