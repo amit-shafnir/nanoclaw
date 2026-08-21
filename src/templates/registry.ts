@@ -12,6 +12,7 @@ import { promisify } from 'util';
 
 import { TEMPLATES_DIR } from '../config.js';
 import { isValidTemplateRef, resolveLocalTemplate } from './local-dir.js';
+import { parsePluginManifest, PLUGIN_MANIFEST_FILE } from './manifest.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -66,22 +67,22 @@ export interface LocalTemplateEntry {
 }
 
 // A directory is a template iff it is an Agent Plugins directory — the
-// manifest is the discovery marker. The pre-plugin layout is detected only to
-// point the operator at a re-fetch.
-const MARKER = 'plugin.json';
+// manifest (PLUGIN_MANIFEST_FILE) is the discovery marker. The pre-plugin
+// layout is detected only to point the operator at a re-fetch.
 const LEGACY_MARKER = 'context/instructions.md';
 
 /** Shallow-clone the template registry into a temp dir. Caller must cleanup(). */
-export async function cloneRegistry(opts?: { timeoutMs?: number }): Promise<ClonedRegistry> {
-  const timeout = opts?.timeoutMs ?? REGISTRY_CLONE_TIMEOUT_MS;
+export async function cloneRegistry(): Promise<ClonedRegistry> {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nanoclaw-tpl-'));
   let commit: string;
   try {
     await execFileAsync('git', ['clone', '--depth', '1', '--', DEFAULT_TEMPLATES_SOURCE, dir], {
-      timeout,
+      timeout: REGISTRY_CLONE_TIMEOUT_MS,
       env: { ...process.env, GIT_TERMINAL_PROMPT: '0' },
     });
-    commit = (await execFileAsync('git', ['-C', dir, 'rev-parse', 'HEAD'], { timeout })).stdout.trim();
+    commit = (
+      await execFileAsync('git', ['-C', dir, 'rev-parse', 'HEAD'], { timeout: REGISTRY_CLONE_TIMEOUT_MS })
+    ).stdout.trim();
   } catch (err) {
     fs.rmSync(dir, { recursive: true, force: true });
     throw new Error('Could not clone the template library', { cause: err });
@@ -92,42 +93,37 @@ export async function cloneRegistry(opts?: { timeoutMs?: number }): Promise<Clon
 export function listTemplatesFromDir(dir: string): TemplateEntry[] {
   if (!fs.existsSync(dir)) return [];
   const rootName = path.basename(path.resolve(dir));
-  const rels = (fs.readdirSync(dir, { recursive: true }) as string[]).map((entry) => entry.split(path.sep).join('/'));
 
-  const refs = new Set<string>();
-  for (const rel of rels) {
-    if (rel === MARKER) refs.add('.');
-    else if (rel.endsWith(`/${MARKER}`)) refs.add(rel.slice(0, -(MARKER.length + 1)));
-  }
+  // Manual walk that stops descending once a directory carries the manifest:
+  // everything below a template belongs to that template (a nested manifest is
+  // plugin content, not a listable ref). A LEGACY_MARKER outside any template
+  // is the pre-plugin layout; fail with a pointer instead of silently listing
+  // nothing. (The same file INSIDE a plugin — e.g. ai.nanoco.nanoclaw/context/
+  // — is never reached.)
+  const refs: string[] = [];
+  const legacy: string[] = [];
+  const visit = (abs: string, ref: string): void => {
+    if (fs.existsSync(path.join(abs, PLUGIN_MANIFEST_FILE))) {
+      refs.push(ref);
+      return;
+    }
+    if (fs.existsSync(path.join(abs, LEGACY_MARKER))) legacy.push(ref);
+    for (const entry of fs.readdirSync(abs, { withFileTypes: true })) {
+      if (entry.isDirectory()) visit(path.join(abs, entry.name), ref === '.' ? entry.name : `${ref}/${entry.name}`);
+    }
+  };
+  visit(dir, '.');
 
-  // A context/instructions.md outside any plugin is the pre-plugin template
-  // layout. Fail with a pointer instead of silently listing nothing. (The
-  // same file INSIDE a plugin — e.g. ai.nanoco.nanoclaw/context/ — is fine.)
-  const legacy = rels
-    .filter((rel) => rel === LEGACY_MARKER || rel.endsWith(`/${LEGACY_MARKER}`))
-    .map((rel) => (rel === LEGACY_MARKER ? '.' : rel.slice(0, -(LEGACY_MARKER.length + 1))))
-    .filter((ref) => !isWithinTemplate(ref, refs));
   if (legacy.length > 0) {
     throw new Error(
-      `Templates predate the plugin format (no ${MARKER}): ${legacy.join(', ')}. ` +
+      `Templates predate the plugin format (no ${PLUGIN_MANIFEST_FILE}): ${legacy.join(', ')}. ` +
         'Re-fetch the template library (and update NanoClaw if fetching does not help).',
     );
   }
 
-  return [...refs]
+  return refs
     .map((ref) => ({ ref, name: ref === '.' ? rootName : (ref.split('/').pop() ?? ref) }))
     .sort((a, b) => a.ref.localeCompare(b.ref));
-}
-
-/** True when `ref` equals or sits anywhere below a discovered template ref. */
-function isWithinTemplate(ref: string, templateRefs: Set<string>): boolean {
-  if (templateRefs.has('.')) return true;
-  for (let current = ref; ; ) {
-    if (templateRefs.has(current)) return true;
-    const cut = current.lastIndexOf('/');
-    if (cut === -1) return false;
-    current = current.slice(0, cut);
-  }
 }
 
 /** Copy a list-derived registry template into the local template library. */
@@ -142,7 +138,7 @@ export function copyTemplate(srcDir: string, ref: string, destDir: string): stri
 
 /**
  * List the local template library with each template's manifest description
- * (best-effort: an unreadable manifest just yields no description). The root
+ * (best-effort: an invalid manifest just yields no description). The root
  * `.` entry is dropped — it is not a stampable ref.
  */
 export function listLocalTemplates(base: string = TEMPLATES_DIR): LocalTemplateEntry[] {
@@ -151,11 +147,8 @@ export function listLocalTemplates(base: string = TEMPLATES_DIR): LocalTemplateE
     .map((entry) => {
       let description: string | undefined;
       try {
-        const raw: unknown = JSON.parse(fs.readFileSync(path.join(base, entry.ref, MARKER), 'utf8'));
-        if (raw !== null && typeof raw === 'object' && !Array.isArray(raw)) {
-          const value = (raw as Record<string, unknown>).description;
-          if (typeof value === 'string') description = value;
-        }
+        const raw: unknown = JSON.parse(fs.readFileSync(path.join(base, entry.ref, PLUGIN_MANIFEST_FILE), 'utf8'));
+        description = parsePluginManifest(raw).description;
       } catch {
         // Best-effort: the listing must not fail on one bad manifest.
       }
@@ -185,7 +178,7 @@ const inFlightByRef = new Map<string, Promise<EnsureTemplateResult>>();
  */
 export async function ensureTemplateLocal(
   ref: string,
-  opts?: { baseDir?: string; timeoutMs?: number; deps?: { clone?: typeof cloneRegistry } },
+  opts?: { baseDir?: string; deps?: { clone?: typeof cloneRegistry } },
 ): Promise<EnsureTemplateResult> {
   if (!isValidTemplateRef(ref)) throw new Error(`Invalid template ref: "${ref}"`);
 
@@ -208,14 +201,14 @@ export async function ensureTemplateLocal(
 
 async function fetchTemplateIntoBase(
   ref: string,
-  opts?: { baseDir?: string; timeoutMs?: number; deps?: { clone?: typeof cloneRegistry } },
+  opts?: { baseDir?: string; deps?: { clone?: typeof cloneRegistry } },
 ): Promise<EnsureTemplateResult> {
   const baseDir = opts?.baseDir ?? TEMPLATES_DIR;
   const dest = path.join(baseDir, ref);
   if (fs.existsSync(dest)) return { ref, dir: dest, source: 'local' };
 
   const clone = opts?.deps?.clone ?? cloneRegistry;
-  const registry = await clone({ timeoutMs: opts?.timeoutMs });
+  const registry = await clone();
   try {
     fs.mkdirSync(baseDir, { recursive: true });
     // Stage inside the templates base (same filesystem) then rename, so a

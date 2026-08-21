@@ -156,11 +156,10 @@ copy". The SHA is provenance only — no version display, no pinning, no
 update-from-chat; restamping stays an `ncl` operation (see
 [Updating a stamped agent](#updating-a-stamped-agent)).
 
-> **Slack installs:** the Slack agent-creation flow lives in the
-> `slack-agent-flow` skill. An install running new trunk with a stale copy of
-> that skill holds Slack-origin templated creates with a payload that lacks the
-> ref, so the approved replay creates a plain agent. Run `/update-skills` to
-> carry the ref through Slack holds.
+> **Skill-installed wrappers:** any installed skill that overrides
+> `create_agent` must be refreshed to carry new hold fields. A stale copy
+> holds templated creates with a payload that lacks the ref, so the approved
+> replay creates a plain agent. Run `/update-skills` after updating.
 
 ## What's in a template
 

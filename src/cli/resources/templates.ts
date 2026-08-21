@@ -42,8 +42,7 @@ registerResource({
       access: 'open',
       description:
         'List agent templates. Without flags, the templates already on this machine (no network). ' +
-        'With --registry, the public template library; narrow it with --category <first ref segment> and --limit <n>. ' +
-        'Offer local templates first, then registry matches for the use case; never quote versions.',
+        'With --registry, the public template library; narrow it with --category <first ref segment> and --limit <n>.',
       args: [
         { name: 'registry', type: 'boolean', description: 'List the public registry instead of local templates/.' },
         { name: 'category', type: 'string', description: 'Registry only: filter by first ref segment (e.g. sales).' },
@@ -72,7 +71,7 @@ registerResource({
         // the "no registry access" signal the caller reports.
         const index = await fetchRegistryIndex();
         const category = args.category as string | undefined;
-        const limit = Math.min(Math.max(Number(args.limit ?? DEFAULT_LIMIT), 1), MAX_LIMIT);
+        const limit = Math.min(Math.max((args.limit as number | undefined) ?? DEFAULT_LIMIT, 1), MAX_LIMIT);
         return index.templates
           .filter((t) => !category || t.ref.split('/')[0] === category)
           .slice(0, limit)

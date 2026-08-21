@@ -79,31 +79,53 @@ export async function validateCreateAgent(content: Record<string, unknown>, sess
   return true;
 }
 
+/**
+ * The hold payload every create_agent hold carries. The payload is the grant
+ * binding: the approved replay re-enters with it as content, so a template
+ * ref left out here would stamp nothing on approve. A templated hold carries
+ * NO instructions — the template branch ignores them (the template supplies
+ * the persona), so the grant only binds what will actually execute. Wrappers
+ * that re-register the action (e.g. slack-agent-flow) spread their own fields
+ * on top of this shared core.
+ */
+export function buildCreateAgentHoldPayload(content: Record<string, unknown>): Record<string, unknown> {
+  const name = typeof content.name === 'string' ? content.name : '';
+  const instructions = typeof content.instructions === 'string' ? content.instructions : null;
+  const template = typeof content.template === 'string' && content.template ? content.template : undefined;
+  return { name, instructions: template ? null : instructions, ...(template ? { template } : {}) };
+}
+
+/**
+ * The template sentence on a create_agent approval card: the admin must see
+ * the ref and whether it resolves to the existing local copy or a registry
+ * fetch. Empty for a plain create. Shared with wrapper cards.
+ */
+export function templateApprovalNote(template: string | undefined): string {
+  if (!template) return '';
+  return ` It will be stamped from template "${template}" (${
+    hasLocalTemplate(template) ? 'using the existing local copy' : 'fetched from the public template registry'
+  }).`;
+}
+
+/** Human-readable stamp provenance: registry clone HEAD, or the local copy. */
+export function formatTemplateProvenance(commit: string | undefined): string {
+  return commit ? `commit ${commit.slice(0, 7)}` : 'local copy';
+}
+
 /** Guard hold: card the requesting group's admin chain. */
 export async function requestCreateAgentHold(content: Record<string, unknown>, session: Session): Promise<void> {
   const name = typeof content.name === 'string' ? content.name : '';
-  const instructions = typeof content.instructions === 'string' ? content.instructions : null;
-  const template = typeof content.template === 'string' ? content.template : undefined;
+  const template = typeof content.template === 'string' && content.template ? content.template : undefined;
   const sourceGroup = await getAgentGroup(session.agent_group_id);
   if (!sourceGroup) return;
 
-  // The payload is the grant binding: the approved replay re-enters with it as
-  // content, so a template ref left out here would stamp nothing on approve.
-  // A templated hold carries NO instructions — the template branch ignores
-  // them (the template supplies the persona), so the grant only binds what
-  // will actually execute.
-  const templateNote = template
-    ? ` It will be stamped from template "${template}" (${
-        hasLocalTemplate(template) ? 'using the existing local copy' : 'fetched from the public template registry'
-      }).`
-    : '';
   await requestApproval({
     session,
     agentName: sourceGroup.name,
     action: 'create_agent',
-    payload: { name, instructions: template ? null : instructions, ...(template ? { template } : {}) },
+    payload: buildCreateAgentHoldPayload(content),
     title: `Create agent: ${name}`,
-    question: `Agent "${sourceGroup.name}" wants to create a new sub-agent "${name}" (a new agent group with its own workspace and container).${templateNote} Approve?`,
+    question: `Agent "${sourceGroup.name}" wants to create a new sub-agent "${name}" (a new agent group with its own workspace and container).${templateApprovalNote(template)} Approve?`,
   });
 }
 
@@ -122,7 +144,7 @@ export interface CreateAgentOutcome {
   agentGroupId: string;
   localName: string;
   /** Present when the group was stamped from a template; commit is the registry clone HEAD (absent when the local copy won). */
-  template?: { ref: string; source: 'local' | 'registry'; commit?: string };
+  template?: { ref: string; commit?: string };
 }
 
 /** Guard allow body: performs the creation (fresh global-scope call or approved replay). */
@@ -146,10 +168,19 @@ export async function createAgent(
     return;
   }
 
+  // Subagent path: a child inherits its creator's EFFECTIVE provider, NOT a
+  // hardcoded fallback — so a child is never spawned on a runtime the parent
+  // can't reach (e.g. a codex-only install where claude isn't authenticated).
+  // A parent with no explicit provider passes undefined through: the config
+  // seam (ensureContainerConfig) owns the DEFAULT_AGENT_PROVIDER fallback,
+  // the same default the parent itself runs on. The operator can still flip a
+  // child later with `ncl groups config update --provider`.
+  const parentProvider = (await getContainerConfig(sourceGroup.id))?.provider ?? undefined;
+
   if (template) {
-    return createFromTemplate(template, name, localName, session, sourceGroup, notify, options);
+    return createFromTemplate(template, name, localName, parentProvider, session, sourceGroup, notify, options);
   }
-  return performCreateAgent(name, localName, instructions, session, sourceGroup, notify, options);
+  return performCreateAgent(name, localName, instructions, parentProvider, session, sourceGroup, notify, options);
 }
 
 /**
@@ -162,6 +193,7 @@ async function createFromTemplate(
   template: string,
   name: string,
   localName: string,
+  parentProvider: string | undefined,
   session: Session,
   sourceGroup: AgentGroup,
   notify: (text: string) => Promise<void>,
@@ -176,13 +208,6 @@ async function createFromTemplate(
     );
     return;
   }
-
-  // Subagent path: a child inherits its creator's EFFECTIVE provider, NOT the
-  // instance-wide default — so a child is never spawned on a runtime the parent
-  // can't reach (e.g. a codex-only install where claude isn't authenticated).
-  // A NULL parent resolves to claude; the operator can still flip a child later
-  // with `ncl groups config update --provider`.
-  const parentProvider = (await getContainerConfig(sourceGroup.id))?.provider ?? 'claude';
 
   let stamped;
   try {
@@ -201,7 +226,7 @@ async function createFromTemplate(
   await wireNewAgent(sourceGroup.id, localName, stamped.group.id, session, now);
 
   if (!options?.suppressCreatedNotify) {
-    const provenance = local.commit ? `commit ${local.commit.slice(0, 7)}` : 'local copy';
+    const provenance = formatTemplateProvenance(local.commit);
     const reportSuffix = stamped.report.length ? `\n${stamped.report.join('\n')}` : '';
     await notify(
       `Agent "${localName}" created from template "${template}" (${provenance}). You can now message it with send_message({ to: "${localName}", ... }).${reportSuffix}`,
@@ -219,7 +244,7 @@ async function createFromTemplate(
   return {
     agentGroupId: stamped.group.id,
     localName,
-    template: { ref: template, source: local.source, ...(local.commit ? { commit: local.commit } : {}) },
+    template: { ref: template, ...(local.commit ? { commit: local.commit } : {}) },
   };
 }
 
@@ -235,6 +260,7 @@ async function performCreateAgent(
   name: string,
   localName: string,
   instructions: string | null,
+  parentProvider: string | undefined,
   session: Session,
   sourceGroup: AgentGroup,
   notify: (text: string) => Promise<void>,
@@ -272,14 +298,6 @@ async function performCreateAgent(
     created_at: now,
   };
   await createAgentGroup(newGroup);
-  // Subagent path: a child inherits its creator's EFFECTIVE provider, NOT the
-  // instance-wide default — so a child is never spawned on a runtime the parent
-  // can't reach (e.g. a codex-only install where claude isn't authenticated).
-  // Passing it explicitly to initGroupFilesystem pins the child's scaffold and
-  // stamps its config row in one step (a NULL parent resolves to claude). The
-  // operator can still flip a child later with `ncl groups config update
-  // --provider`.
-  const parentProvider = (await getContainerConfig(sourceGroup.id))?.provider ?? 'claude';
   await initGroupFilesystem(newGroup, { instructions: instructions ?? undefined, provider: parentProvider });
 
   await wireNewAgent(sourceGroup.id, localName, agentGroupId, session, now);
