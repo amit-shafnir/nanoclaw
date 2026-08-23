@@ -33,7 +33,7 @@ import k from 'kleur';
 import { type AssistContext, BIG_PICTURE_FILES, STEP_FILES } from '../lib/claude-assist.js';
 import { machineChildEnvironment, runInteractiveProcess } from '../lib/interactive-process.js';
 import { registerSensitiveValue } from '../lib/redaction.js';
-import { runSecretCommand } from '../lib/secret-file.js';
+import { withSecretFile } from '../lib/secret-file.js';
 import { type SetupDriver } from '../lib/setup-driver.js';
 import { brandBody, note } from '../lib/theme.js';
 import * as setupLog from '../logs.js';
@@ -189,25 +189,21 @@ async function runCodexApiKeyAuth(driver: SetupDriver): Promise<void> {
   registerSensitiveValue(key);
   driver.progress('codex-auth', 'running', 'Saving OpenAI credentials');
 
-  const args = (secretFlag: '--file' | '--value', secretValue: string): string[] => [
+  // The key reaches OneCLI through a private one-use file in both renderers;
+  // it never appears in argv.
+  const args = (filePath: string): string[] => [
     'secrets',
     'create',
     '--name',
     'Codex',
     '--type',
     'openai',
-    secretFlag,
-    secretValue,
+    '--file',
+    filePath,
     '--host-pattern',
     'api.openai.com',
   ];
-  const ok = await runSecretCommand(
-    driver.mode,
-    key,
-    args('--value', key),
-    (filePath) => args('--file', filePath),
-    (vaultArgs) => runVaultCommand(driver, vaultArgs),
-  );
+  const ok = await withSecretFile(key, (filePath) => runVaultCommand(driver, args(filePath)));
   if (!ok) {
     setupLog.step('auth', 'failed', 0, { PROVIDER: 'codex', METHOD: 'api', ERROR: 'vault_create_failed' });
     driver.log(

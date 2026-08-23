@@ -510,7 +510,7 @@ describe('structured Codex authentication', () => {
     expect(driver.progressEvents.map(({ state }) => state)).toEqual(['running', 'succeeded']);
   });
 
-  it('keeps the terminal API-key vault command on its existing --value path', async () => {
+  it('keeps the terminal API-key vault command off argv too', async () => {
     const secret = 'sk-test-terminal-secret';
     const driver = new FakeDriver('terminal', ['api', secret]);
 
@@ -519,18 +519,13 @@ describe('structured Codex authentication', () => {
     const vaultCall = mocks.execFileSync.mock.calls.find(
       (call) => call[0] === 'onecli' && Array.isArray(call[1]) && call[1][1] === 'create',
     );
-    expect(vaultCall?.[1]).toEqual([
-      'secrets',
-      'create',
-      '--name',
-      'Codex',
-      '--type',
-      'openai',
-      '--value',
-      secret,
-      '--host-pattern',
-      'api.openai.com',
-    ]);
+    const vaultArgs = vaultCall?.[1] as string[];
+    expect(vaultArgs.slice(0, 6)).toEqual(['secrets', 'create', '--name', 'Codex', '--type', 'openai']);
+    expect(vaultArgs.slice(-2)).toEqual(['--host-pattern', 'api.openai.com']);
+    expect(vaultArgs).toContain('--file');
+    expect(vaultArgs).not.toContain('--value');
+    expect(vaultArgs.join(' ')).not.toContain(secret);
+    expect(fs.existsSync(vaultArgs[vaultArgs.indexOf('--file') + 1])).toBe(false);
     expect(mocks.runInteractiveProcess).not.toHaveBeenCalled();
   });
 
