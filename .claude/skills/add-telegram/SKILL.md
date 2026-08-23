@@ -29,6 +29,8 @@ src/channels/telegram-pairing.ts
 src/channels/telegram-pairing.test.ts
 src/channels/telegram-registration.test.ts
 src/channels/telegram-connect-group.test.ts
+src/channels/telegram-slash.test.ts
+src/channels/telegram-outbound.test.ts
 ```
 
 ### 2. Register the adapter
