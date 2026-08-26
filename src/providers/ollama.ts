@@ -97,6 +97,16 @@ registerProviderContainerConfig('ollama', (ctx) => {
       CLAUDE_CODE_MAX_OUTPUT_TOKENS: '8192',
       CLAUDE_CODE_DISABLE_OFFICIAL_MARKETPLACE_AUTOINSTALL: '1',
       CLAUDE_CODE_FORCE_MID_CONVERSATION_SYSTEM: 'false',
+      // Claude Code emits per-call context as role:"system" messages, and Ollama's qwen3.8 renderer variant folds
+      // every system message into the leading system turn, so each one lands at the end of the prompt prefix and
+      // re-prefills the conversation behind it. Measured on qwen3.8:27b-mlx: the tokens reminder fires after every
+      // tool result and user prompt (cache stuck at 45%, 39.9s per call); the todo reminder fires every 9 to 12
+      // calls (54281 tokens re-prefilled in one 167s call at 69k context) and only nudges TodoWrite and the task
+      // tools. With both off, 24 consecutive calls held re-prefill flat at 24-85 while the prompt grew 69519 to
+      // 72107. Not seen on gemma4:12b-mlx; Ollama sets the tokens one on its own launch path (add1f92b).
+      // ollama.test.ts pins both keys.
+      CLAUDE_CODE_TOTAL_TOKENS_REMINDER: 'off',
+      CLAUDE_CODE_TODO_REMINDER_MODE: 'off',
       CLAUDE_CODE_DISABLE_ARTIFACT: '1',
       CLAUDE_CODE_DISABLE_TERMINAL_TITLE: '1',
       CLAUDE_CODE_DISABLE_WORKFLOWS: '1',
