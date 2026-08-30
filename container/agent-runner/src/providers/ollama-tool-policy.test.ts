@@ -45,10 +45,33 @@ it('routes the runtime alias and keeps web tools usable without the cloud prefli
   provider.query({ prompt: 'browse locally', cwd: home });
 
   expect(capturedOptions?.model).toBe('nanoclaw/abc:latest');
-  expect(capturedOptions?.effort).toBeUndefined();
+  expect(capturedOptions?.effort).toBe('low');
+  expect(capturedOptions?.disallowedTools).toEqual(expect.arrayContaining(['WebFetch', 'WebSearch']));
+  expect(capturedOptions?.settings).toEqual({ skipWebFetchPreflight: true });
+});
+
+it('uses Ollama search and redirects fetch through the signed local daemon when browsing is enabled', () => {
+  const provider = getProviderFactory('ollama')({
+    model: 'qwen3:8b',
+    env: {
+      NANOCLAW_OLLAMA_RUNTIME_MODEL: 'nanoclaw/abc:latest',
+      NANOCLAW_OLLAMA_WEB_BROWSING: 'enabled',
+    },
+  });
+  provider.registerMemorySessionHook(MEMORY_SESSION_HOOK);
+  provider.query({ prompt: 'browse locally', cwd: home });
+
   expect(capturedOptions?.disallowedTools).not.toContain('WebFetch');
   expect(capturedOptions?.disallowedTools).not.toContain('WebSearch');
-  expect(capturedOptions?.settings).toEqual({ skipWebFetchPreflight: true });
+  expect(capturedOptions?.toolAliases).toEqual({ WebFetch: 'mcp__nanoclaw__ollama_web_fetch' });
+});
+
+it('preserves an explicit effort setting', () => {
+  const provider = getProviderFactory('ollama')({ effort: 'high' });
+  provider.registerMemorySessionHook(MEMORY_SESSION_HOOK);
+  provider.query({ prompt: 'think deeply', cwd: home });
+
+  expect(capturedOptions?.effort).toBe('high');
 });
 
 it('pins skipWebFetchPreflight in the installed SDK type surface', () => {
@@ -57,4 +80,5 @@ it('pins skipWebFetchPreflight in the installed SDK type surface', () => {
   const sdkEntry = require.resolve('@anthropic-ai/claude-agent-sdk');
   const types = fs.readFileSync(path.join(path.dirname(sdkEntry), 'sdk.d.ts'), 'utf8');
   expect(types).toMatch(/skipWebFetchPreflight\?:\s*boolean/);
+  expect(types).toMatch(/toolAliases\?:\s*Record<string, string>/);
 });

@@ -7,6 +7,8 @@ import { readEnvFile } from '../env.js';
 import { registerProviderContainerConfig } from './provider-container-registry.js';
 
 const DEFAULT_OLLAMA_BASE_URL = 'http://host.docker.internal:11434';
+const WEB_BROWSING_ENABLED = 'enabled';
+const WEB_BROWSING_DISABLED = 'disabled';
 const MODEL_NAME = /^[a-zA-Z0-9_.:/-]+$/;
 const BLOCKED_CLOUD_HOSTS = [
   'api.anthropic.com',
@@ -22,6 +24,15 @@ const BLOCKED_CLOUD_HOSTS = [
 export interface OllamaModelState {
   runtimeModel: string;
   contextLength?: number;
+}
+
+export function resolveOllamaWebBrowsing(hostEnv: NodeJS.ProcessEnv): 'enabled' | 'disabled' {
+  const configured = hostEnv.OLLAMA_WEB_BROWSING ?? readEnvFile(['OLLAMA_WEB_BROWSING']).OLLAMA_WEB_BROWSING;
+  if (configured === undefined || configured === '' || configured === WEB_BROWSING_DISABLED) {
+    return WEB_BROWSING_DISABLED;
+  }
+  if (configured === WEB_BROWSING_ENABLED) return WEB_BROWSING_ENABLED;
+  throw new Error('OLLAMA_WEB_BROWSING must be "enabled" or "disabled"');
 }
 
 export function readOllamaModelState(sourceModel: string, dataDir = DATA_DIR): OllamaModelState | undefined {
@@ -75,6 +86,7 @@ registerProviderContainerConfig('ollama', (ctx) => {
   }
   const modelState = readOllamaModelState(sourceModel);
   const runtimeModel = modelState?.runtimeModel ?? sourceModel;
+  const webBrowsing = resolveOllamaWebBrowsing(ctx.hostEnv);
 
   return {
     blockedHosts: BLOCKED_CLOUD_HOSTS,
@@ -125,6 +137,7 @@ registerProviderContainerConfig('ollama', (ctx) => {
       NO_PROXY: noProxy,
       no_proxy: noProxy,
       NANOCLAW_OLLAMA_RUNTIME_MODEL: runtimeModel,
+      NANOCLAW_OLLAMA_WEB_BROWSING: webBrowsing,
       ...(modelState?.contextLength && {
         CLAUDE_CODE_MAX_CONTEXT_TOKENS: String(modelState.contextLength),
         // Claude Code's default auto-compact window (165k) never triggers for a

@@ -5,7 +5,7 @@ import path from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
-import { readOllamaModelState } from './ollama.js';
+import { readOllamaModelState, resolveOllamaWebBrowsing } from './ollama.js';
 import { getProviderContainerConfig } from './provider-container-registry.js';
 
 async function contribution(model?: string, hostEnv: NodeJS.ProcessEnv = {}) {
@@ -46,6 +46,7 @@ describe('ollama host provider configuration', () => {
       CLAUDE_CODE_DISABLE_CLAUDE_API_SKILL: '1',
       CLAUDE_CODE_SUBAGENT_MODEL: 'qwen3:8b',
       ANTHROPIC_DEFAULT_HAIKU_MODEL: 'qwen3:8b',
+      NANOCLAW_OLLAMA_WEB_BROWSING: 'disabled',
     });
     expect(config.env?.NO_PROXY?.split(',')).toEqual([
       '127.0.0.1',
@@ -53,6 +54,15 @@ describe('ollama host provider configuration', () => {
       'host.docker.internal',
       ...config.blockedHosts!,
     ]);
+  });
+
+  it('enables hosted browsing only from the explicit non-secret flag', async () => {
+    const config = await contribution('qwen3:8b', { OLLAMA_WEB_BROWSING: 'enabled' });
+    expect(config.env?.NANOCLAW_OLLAMA_WEB_BROWSING).toBe('enabled');
+    expect(resolveOllamaWebBrowsing({ OLLAMA_WEB_BROWSING: 'disabled' })).toBe('disabled');
+    expect(() => resolveOllamaWebBrowsing({ OLLAMA_WEB_BROWSING: 'yes' })).toThrow(
+      'must be "enabled" or "disabled"',
+    );
   });
 
   it('rejects credentials in the configured Ollama URL', async () => {

@@ -13,18 +13,26 @@ export function resolveOllamaRuntimeModel(options: ProviderOptions): string | un
   return options.env?.NANOCLAW_OLLAMA_RUNTIME_MODEL || options.model;
 }
 
+export function ollamaWebBrowsingEnabled(options: ProviderOptions): boolean {
+  return options.env?.NANOCLAW_OLLAMA_WEB_BROWSING === 'enabled';
+}
+
 class OllamaProvider extends ClaudeProvider {
   readonly emitsMidTurnText = false;
   private readonly sourceModel?: string;
 
   constructor(options: ProviderOptions) {
+    const webBrowsingEnabled = ollamaWebBrowsingEnabled(options);
     super({
       ...options,
       model: resolveOllamaRuntimeModel(options),
-      // WebFetch's advisory domain-safety preflight calls api.anthropic.com, which this provider's cloud block
-      // makes unreachable. Skipping only that check keeps the tool usable: the fetch itself is client-side and the
-      // summarization pass runs against the local daemon.
+      effort: options.effort ?? 'low',
+      // The provider aliases WebFetch to Ollama's daemon-backed adapter. Skip
+      // Claude's advisory api.anthropic.com preflight so the blocked cloud host
+      // cannot fail the call before the alias runs.
       settings: { skipWebFetchPreflight: true },
+      toolAliases: webBrowsingEnabled ? { WebFetch: 'mcp__nanoclaw__ollama_web_fetch' } : undefined,
+      disallowedTools: webBrowsingEnabled ? undefined : ['WebSearch', 'WebFetch'],
     });
     this.sourceModel = options.model;
   }
