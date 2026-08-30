@@ -60,9 +60,7 @@ describe('ollama host provider configuration', () => {
     const config = await contribution('qwen3:8b', { OLLAMA_WEB_BROWSING: 'enabled' });
     expect(config.env?.NANOCLAW_OLLAMA_WEB_BROWSING).toBe('enabled');
     expect(resolveOllamaWebBrowsing({ OLLAMA_WEB_BROWSING: 'disabled' })).toBe('disabled');
-    expect(() => resolveOllamaWebBrowsing({ OLLAMA_WEB_BROWSING: 'yes' })).toThrow(
-      'must be "enabled" or "disabled"',
-    );
+    expect(() => resolveOllamaWebBrowsing({ OLLAMA_WEB_BROWSING: 'yes' })).toThrow('must be "enabled" or "disabled"');
   });
 
   it('rejects credentials in the configured Ollama URL', async () => {

@@ -10,35 +10,33 @@ const FETCH_TIMEOUT_MS = 30_000;
 
 type FetchLike = typeof fetch;
 
-type OllamaFetchResult =
-  | { ok: true; text: string }
-  | { ok: false; message: string };
+type OllamaFetchResult = { ok: true; text: string } | { ok: false; message: string };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
 
 function isPrivateIpLiteral(hostname: string): boolean {
-	const candidate = hostname.startsWith('[') && hostname.endsWith(']') ? hostname.slice(1, -1) : hostname;
-	const version = isIP(candidate);
-	if (version === 4) {
-		const [a, b] = candidate.split('.').map(Number);
-		return (
-			a === 0 ||
-			a === 10 ||
-			a === 127 ||
-			(a === 100 && b >= 64 && b <= 127) ||
-			(a === 169 && b === 254) ||
-			(a === 172 && b >= 16 && b <= 31) ||
-			(a === 192 && b === 168) ||
-			(a === 198 && (b === 18 || b === 19)) ||
-			a >= 224
-		);
-	}
-	if (version === 6) {
-		const normalized = candidate.toLowerCase();
-		const first = Number.parseInt(normalized.split(':')[0] || '0', 16);
-		return normalized === '::' || normalized === '::1' || (first & 0xfe00) === 0xfc00 || (first & 0xffc0) === 0xfe80;
+  const candidate = hostname.startsWith('[') && hostname.endsWith(']') ? hostname.slice(1, -1) : hostname;
+  const version = isIP(candidate);
+  if (version === 4) {
+    const [a, b] = candidate.split('.').map(Number);
+    return (
+      a === 0 ||
+      a === 10 ||
+      a === 127 ||
+      (a === 100 && b >= 64 && b <= 127) ||
+      (a === 169 && b === 254) ||
+      (a === 172 && b >= 16 && b <= 31) ||
+      (a === 192 && b === 168) ||
+      (a === 198 && (b === 18 || b === 19)) ||
+      a >= 224
+    );
+  }
+  if (version === 6) {
+    const normalized = candidate.toLowerCase();
+    const first = Number.parseInt(normalized.split(':')[0] || '0', 16);
+    return normalized === '::' || normalized === '::1' || (first & 0xfe00) === 0xfc00 || (first & 0xffc0) === 0xfe80;
   }
   return false;
 }
@@ -60,12 +58,17 @@ function parsePublicWebUrl(raw: unknown): URL | null {
 function errorForStatus(status: number, body: Record<string, unknown>): string {
   const detail = typeof body.error === 'string' ? ` (${body.error})` : '';
   if (status === 401) {
-    const signin = typeof body.signin_url === 'string' ? ` Sign in on the host: ${body.signin_url}` : ' Run `ollama signin` on the host.';
+    const signin =
+      typeof body.signin_url === 'string'
+        ? ` Sign in on the host: ${body.signin_url}`
+        : ' Run `ollama signin` on the host.';
     return `Ollama browsing is not signed in.${signin}`;
   }
   if (status === 403) return `Ollama Cloud is disabled${detail}. Enable Cloud on the host, then retry.`;
-  if (status === 404) return 'This Ollama version does not provide the local Web Fetch proxy. Update Ollama, then retry.';
-  if (status === 429) return 'Ollama browsing usage is exhausted or rate-limited. Check the Ollama account usage, then retry.';
+  if (status === 404)
+    return 'This Ollama version does not provide the local Web Fetch proxy. Update Ollama, then retry.';
+  if (status === 429)
+    return 'Ollama browsing usage is exhausted or rate-limited. Check the Ollama account usage, then retry.';
   return `Ollama Web Fetch failed with HTTP ${status}${detail}.`;
 }
 
@@ -138,7 +141,7 @@ export const ollamaWebFetch: McpToolDefinition = {
   tool: {
     name: 'ollama_web_fetch',
     description:
-      'Fetch a public web page through Ollama\'s signed hosted Web Fetch service. The parent model applies the supplied prompt to the returned title, main content, and links.',
+      "Fetch a public web page through Ollama's signed hosted Web Fetch service. The parent model applies the supplied prompt to the returned title, main content, and links.",
     inputSchema: {
       type: 'object',
       properties: {
