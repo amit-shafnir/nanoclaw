@@ -61,7 +61,7 @@ describe('Ollama Web Fetch adapter', () => {
   it.each([
     [401, { error: 'unauthorized', signin_url: 'https://ollama.com/connect/x' }, 'Sign in on the host'],
     [403, { error: 'ollama cloud is disabled' }, 'Enable Cloud on the host'],
-    [404, { error: 'not found' }, 'Update Ollama'],
+    [404, { error: 'not found' }, 'Try another result or URL'],
     [429, { error: 'rate limited' }, 'usage is exhausted or rate-limited'],
   ])('maps HTTP %i to an actionable failure', async (status, body, expected) => {
     const result = await fetchOllamaWebPage(
@@ -80,5 +80,15 @@ describe('Ollama Web Fetch adapter', () => {
       'http://ollama.test',
     );
     expect(result).toEqual({ ok: false, message: 'Ollama Web Fetch returned an unexpected response shape.' });
+  });
+
+  it('distinguishes a missing local proxy route from a target URL 404', async () => {
+    const result = await fetchOllamaWebPage(
+      { url: 'https://example.com', prompt: 'read' },
+      fakeFetch(new Response('404 page not found', { status: 404 })),
+      'http://ollama.test',
+    );
+    expect(result).toMatchObject({ ok: false });
+    if (!result.ok) expect(result.message).toContain('Update Ollama');
   });
 });

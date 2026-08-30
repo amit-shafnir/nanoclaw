@@ -65,8 +65,7 @@ function errorForStatus(status: number, body: Record<string, unknown>): string {
     return `Ollama browsing is not signed in.${signin}`;
   }
   if (status === 403) return `Ollama Cloud is disabled${detail}. Enable Cloud on the host, then retry.`;
-  if (status === 404)
-    return 'This Ollama version does not provide the local Web Fetch proxy. Update Ollama, then retry.';
+  if (status === 404) return `Ollama Web Fetch could not fetch that URL${detail}. Try another result or URL.`;
   if (status === 429)
     return 'Ollama browsing usage is exhausted or rate-limited. Check the Ollama account usage, then retry.';
   return `Ollama Web Fetch failed with HTTP ${status}${detail}.`;
@@ -106,6 +105,12 @@ export async function fetchOllamaWebPage(
   try {
     body = await response.json();
   } catch {
+    if (response.status === 404) {
+      return {
+        ok: false,
+        message: 'This Ollama version does not provide the local Web Fetch proxy. Update Ollama, then retry.',
+      };
+    }
     return { ok: false, message: `Ollama Web Fetch returned invalid JSON (HTTP ${response.status}).` };
   }
   const record = isRecord(body) ? body : {};
