@@ -229,6 +229,7 @@ async function runCodexApiKeyAuth(driver: SetupDriver): Promise<void> {
 const MAX_CODEX_AUTH_OUTPUT_BYTES = 64 * 1024;
 const AUTH_JSON_MAX_BYTES = 1024 * 1024;
 const CODEX_LOGIN_TIMEOUT_MS = 15 * 60 * 1000;
+const CODEX_CLI_BOOTSTRAP_TIMEOUT_MS = 2 * 60 * 1000;
 const CODEX_STATUS_TIMEOUT_MS = 30 * 1000;
 const VAULT_TIMEOUT_MS = 2 * 60 * 1000;
 
@@ -344,16 +345,73 @@ function createCodexOutputHandler(
   };
 }
 
-async function hasAuthenticatedCodexSession(driver: SetupDriver, env: NodeJS.ProcessEnv): Promise<boolean> {
+interface CodexCliInvocation {
+  command: string;
+  prefixArgs: string[];
+}
+
+async function canRunCodexCli(driver: SetupDriver, cli: CodexCliInvocation): Promise<boolean> {
+  const args = [...cli.prefixArgs, '--version'];
   if (driver.mode === 'terminal') {
-    const result = spawnSync('codex', ['login', 'status'], {
+    const result = spawnSync(cli.command, args, {
+      encoding: 'utf-8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+      ...(cli.command === 'npx' ? { timeout: CODEX_CLI_BOOTSTRAP_TIMEOUT_MS } : {}),
+    });
+    return result.status === 0;
+  }
+
+  try {
+    const result = await runInteractiveProcess(driver, cli.command, args, {
+      env: machineChildEnvironment(),
+      timeoutMs: CODEX_CLI_BOOTSTRAP_TIMEOUT_MS,
+    });
+    return result.reason === 'exited' && result.exitCode === 0;
+  } catch {
+    driver.throwIfCancelled();
+    return false;
+  }
+}
+
+function readPinnedCodexVersion(projectRoot: string): string | undefined {
+  try {
+    const tools = JSON.parse(fs.readFileSync(path.join(projectRoot, 'container', 'cli-tools.json'), 'utf-8')) as Array<{
+      name?: string;
+      version?: string;
+    }>;
+    const version = tools.find((tool) => tool.name === '@openai/codex')?.version;
+    return typeof version === 'string' && /^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/.test(version) ? version : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+async function resolveCodexCli(driver: SetupDriver, projectRoot: string): Promise<CodexCliInvocation | undefined> {
+  const installed = { command: 'codex', prefixArgs: [] };
+  if (await canRunCodexCli(driver, installed)) return installed;
+
+  const version = readPinnedCodexVersion(projectRoot);
+  if (!version) return undefined;
+  const fallback = { command: 'npx', prefixArgs: ['--yes', `@openai/codex@${version}`] };
+  driver.log('step', brandBody(`Preparing the pinned Codex CLI (${version}) for sign-in…`));
+  return (await canRunCodexCli(driver, fallback)) ? fallback : undefined;
+}
+
+async function hasAuthenticatedCodexSession(
+  driver: SetupDriver,
+  cli: CodexCliInvocation,
+  env: NodeJS.ProcessEnv,
+): Promise<boolean> {
+  const args = [...cli.prefixArgs, 'login', 'status'];
+  if (driver.mode === 'terminal') {
+    const result = spawnSync(cli.command, args, {
       env: { ...process.env, ...env },
       encoding: 'utf-8',
       stdio: ['ignore', 'pipe', 'pipe'],
     });
     return result.status === 0;
   }
-  const result = await runInteractiveProcess(driver, 'codex', ['login', 'status'], {
+  const result = await runInteractiveProcess(driver, cli.command, args, {
     env,
     timeoutMs: CODEX_STATUS_TIMEOUT_MS,
   });
@@ -376,19 +434,27 @@ async function runVaultCommand(driver: SetupDriver, args: string[]): Promise<boo
   return result.reason === 'exited' && result.exitCode === 0;
 }
 
-export async function runCodexLoginAuth(driver: SetupDriver, method: 'browser' | 'device'): Promise<void> {
-  if (driver.mode === 'terminal') {
-    const codexCheck = spawnSync('codex', ['--version'], { encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'] });
-    if (codexCheck.status !== 0) {
-      driver.log(
-        'error',
-        brandBody(
-          'The Codex CLI is not installed on this machine. Install it with `npm install -g @openai/codex`, then re-run setup — or choose the API key option instead.',
-        ),
-      );
-      setupLog.step('auth', 'failed', 0, { PROVIDER: 'codex', METHOD: method, ERROR: 'codex_cli_missing' });
-      process.exit(1);
-    }
+export async function runCodexLoginAuth(
+  driver: SetupDriver,
+  method: 'browser' | 'device',
+  projectRoot = process.cwd(),
+): Promise<void> {
+  const cli = await resolveCodexCli(driver, projectRoot);
+  if (!cli) {
+    driver.log(
+      'error',
+      brandBody(
+        "Couldn't run the Codex CLI on this machine. Setup tried the provider's pinned CLI with npx. Check npm and network access, then retry — or choose the API key option instead.",
+      ),
+    );
+    setupLog.step('auth', 'failed', 0, { PROVIDER: 'codex', METHOD: method, ERROR: 'codex_cli_missing' });
+    if (driver.mode === 'terminal') process.exit(1);
+    driver.error(
+      'codex_cli_missing',
+      "Couldn't run the Codex CLI on this machine.",
+      [{ kind: 'rerun', args: ['--protocol', 'nanoclaw.driver.v1'] }],
+      'auth',
+    );
   }
 
   if (method === 'browser') {
@@ -430,7 +496,7 @@ export async function runCodexLoginAuth(driver: SetupDriver, method: 'browser' |
     const output = createCodexOutputHandler(driver, method);
     let result: Awaited<ReturnType<typeof runInteractiveProcess>> | { reason: 'provider_output_limit' };
     try {
-      result = await runInteractiveProcess(driver, 'codex', args, {
+      result = await runInteractiveProcess(driver, cli.command, [...cli.prefixArgs, ...args], {
         timeoutMs: CODEX_LOGIN_TIMEOUT_MS,
         env: loginEnv,
         ...(driver.mode === 'ndjson' ? { onOutput: output.onOutput } : {}),
@@ -491,7 +557,7 @@ export async function runCodexLoginAuth(driver: SetupDriver, method: 'browser' |
       );
     }
 
-    if (!(await hasAuthenticatedCodexSession(driver, loginEnv))) {
+    if (!(await hasAuthenticatedCodexSession(driver, cli, loginEnv))) {
       setupLog.step('auth', 'failed', durationMs, {
         PROVIDER: 'codex',
         METHOD: method,

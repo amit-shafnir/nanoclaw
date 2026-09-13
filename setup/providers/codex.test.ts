@@ -217,6 +217,7 @@ beforeEach(() => {
         return { reason: 'exited' as const, exitCode: 0 };
       }
       if (command === 'codex') {
+        if (args[0] === '--version') return { reason: 'exited' as const, exitCode: 0 };
         if (args[0] === 'login' && args[1] === 'status') return codexStatusResult;
         const codexHome = options.env?.CODEX_HOME;
         if (!codexHome) throw new Error('missing CODEX_HOME');
@@ -409,6 +410,43 @@ describe('structured Codex authentication', () => {
     expect(fs.existsSync(loginRoot)).toBe(false);
   });
 
+  it('uses the manifest-pinned CLI for terminal login and status when codex is not installed', async () => {
+    const root = createCodexInstallTree();
+    let loginRoot = '';
+    mocks.spawnSync.mockImplementation((command: unknown, args: unknown) => ({
+      status: command === 'codex' && Array.isArray(args) && args[0] === '--version' ? 1 : 0,
+      stdout: '',
+      stderr: '',
+    }));
+    mocks.runInteractiveProcess.mockImplementationOnce(
+      async (_driver: SetupDriver, command: string, args: string[], options: ProcessOptions) => {
+        expect(command).toBe('npx');
+        expect(args).toEqual(['--yes', '@openai/codex@0.138.0', 'login', '--device-auth']);
+        loginRoot = options.env?.CODEX_HOME ?? '';
+        writeAuthFile(loginRoot);
+        return { reason: 'exited' as const, exitCode: 0 };
+      },
+    );
+
+    try {
+      await runCodexLoginAuth(new FakeDriver('terminal'), 'device', root);
+
+      expect(mocks.spawnSync).toHaveBeenCalledWith(
+        'npx',
+        ['--yes', '@openai/codex@0.138.0', '--version'],
+        expect.objectContaining({ stdio: ['ignore', 'pipe', 'pipe'], timeout: 2 * 60 * 1000 }),
+      );
+      expect(mocks.spawnSync).toHaveBeenCalledWith(
+        'npx',
+        ['--yes', '@openai/codex@0.138.0', 'login', 'status'],
+        expect.objectContaining({ env: expect.objectContaining({ CODEX_HOME: loginRoot }) }),
+      );
+      expect(fs.existsSync(loginRoot)).toBe(false);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it('explains a failed terminal status check before exiting', async () => {
     mocks.spawnSync.mockImplementation((_command: unknown, args: unknown) => ({
       status: Array.isArray(args) && args[0] === 'login' && args[1] === 'status' ? 1 : 0,
@@ -450,7 +488,10 @@ describe('structured Codex authentication', () => {
     expect(redactSensitiveValues(browserUrl)).toBe('[REDACTED]');
     expect(redactSensitiveValues(authToken)).toBe('[REDACTED]');
 
-    const loginCall = mocks.runInteractiveProcess.mock.calls.find((call) => call[1] === 'codex');
+    const loginCall = mocks.runInteractiveProcess.mock.calls.find(
+      (call) =>
+        call[1] === 'codex' && (call[2] as string[])[0] === 'login' && !(call[2] as string[]).includes('status'),
+    );
     const loginOptions = loginCall?.[3] as ProcessOptions;
     const loginEnv = loginOptions.env;
     expect(loginEnv?.HOME).not.toBe(os.homedir());
@@ -482,6 +523,72 @@ describe('structured Codex authentication', () => {
     expect(fs.existsSync(loginEnv?.CODEX_HOME ?? '')).toBe(false);
   });
 
+  it('uses the manifest-pinned CLI for machine login and status when codex is not installed', async () => {
+    const root = createCodexInstallTree();
+    mocks.runInteractiveProcess.mockImplementation(
+      async (_driver: SetupDriver, command: string, args: string[], options: ProcessOptions = {}) => {
+        if (command === 'codex' && args[0] === '--version') {
+          return { reason: 'exited' as const, exitCode: 1 };
+        }
+        if (command === 'npx' && args.at(-1) === '--version') {
+          return { reason: 'exited' as const, exitCode: 0 };
+        }
+        if (command === 'npx' && args.slice(-2).join(' ') === 'login status') {
+          return { reason: 'exited' as const, exitCode: 0 };
+        }
+        if (command === 'npx') {
+          for (const chunk of codexOutput) {
+            await options.onOutput?.(chunk, 'stdout', { write() {}, end() {} });
+          }
+          writeAuthFile(options.env?.CODEX_HOME ?? '');
+          return { reason: 'exited' as const, exitCode: 0 };
+        }
+        return { reason: 'exited' as const, exitCode: 0 };
+      },
+    );
+
+    try {
+      const driver = new FakeDriver('ndjson');
+      await runCodexLoginAuth(driver, 'browser', root);
+
+      const npxCalls = mocks.runInteractiveProcess.mock.calls.filter((call) => call[1] === 'npx');
+      expect(npxCalls.map((call) => call[2])).toEqual([
+        ['--yes', '@openai/codex@0.138.0', '--version'],
+        ['--yes', '@openai/codex@0.138.0', 'login'],
+        ['--yes', '@openai/codex@0.138.0', 'login', 'status'],
+      ]);
+      expect(driver.displays).toContainEqual(expect.objectContaining({ kind: 'url', url: browserUrl }));
+      expect(driver.progressEvents.at(-1)?.state).toBe('succeeded');
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    ['missing', undefined],
+    ['malformed', [{ name: '@openai/codex', version: 'latest' }]],
+  ])('fails closed when the pinned CLI manifest is %s', async (_name, manifest) => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nanoclaw-codex-cli-manifest-'));
+    if (manifest) {
+      fs.mkdirSync(path.join(root, 'container'), { recursive: true });
+      fs.writeFileSync(path.join(root, 'container', 'cli-tools.json'), JSON.stringify(manifest));
+    }
+    mocks.runInteractiveProcess.mockResolvedValue({ reason: 'exited' as const, exitCode: 1 });
+
+    try {
+      await expect(runCodexLoginAuth(new FakeDriver('ndjson'), 'browser', root)).rejects.toThrow('codex_cli_missing');
+      expect(mocks.runInteractiveProcess).toHaveBeenCalledTimes(1);
+      expect(mocks.runInteractiveProcess).toHaveBeenCalledWith(
+        expect.any(FakeDriver),
+        'codex',
+        ['--version'],
+        expect.objectContaining({ timeoutMs: 2 * 60 * 1000 }),
+      );
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it('surfaces a bounded device URL and pairing code after split output', async () => {
     codexOutput = [
       'Open this link in your browser:\nhttps://auth.openai.com/codex/',
@@ -491,7 +598,10 @@ describe('structured Codex authentication', () => {
 
     await runCodexLoginAuth(driver, 'device');
 
-    const loginCall = mocks.runInteractiveProcess.mock.calls.find((call) => call[1] === 'codex');
+    const loginCall = mocks.runInteractiveProcess.mock.calls.find(
+      (call) =>
+        call[1] === 'codex' && (call[2] as string[])[0] === 'login' && !(call[2] as string[]).includes('status'),
+    );
     expect(loginCall?.[2]).toEqual(['login', '--device-auth']);
     expect(driver.displays).toEqual(
       expect.arrayContaining([
@@ -564,6 +674,7 @@ describe('structured Codex authentication', () => {
           return { reason: 'exited' as const, exitCode: 0 };
         }
         if (command === 'codex') {
+          if (args[0] === '--version') return { reason: 'exited' as const, exitCode: 0 };
           if (args[0] === 'login' && args[1] === 'status') return codexStatusResult;
           await options.onOutput?.('https://auth.openai.com/oauth/authorize?clie', 'stdout', { write() {}, end() {} });
           await options.onOutput?.('opening browser…\n', 'stderr', { write() {}, end() {} });
@@ -620,6 +731,9 @@ describe('structured Codex authentication', () => {
           await options.onOutput?.('{"data":[]}\n', 'stdout', { write() {}, end() {} });
           return { reason: 'exited' as const, exitCode: 0 };
         }
+        if (command === 'codex' && args[0] === '--version') {
+          return { reason: 'exited' as const, exitCode: 0 };
+        }
         const codexHome = options.env?.CODEX_HOME ?? '';
         loginRoot = path.dirname(codexHome);
         return codexResult;
@@ -639,6 +753,9 @@ describe('structured Codex authentication', () => {
       async (_driver: SetupDriver, command: string, args: string[], options: ProcessOptions) => {
         if (command === 'onecli' && args[1] === 'list') {
           await options.onOutput?.('{"data":[]}\n', 'stdout', { write() {}, end() {} });
+          return { reason: 'exited' as const, exitCode: 0 };
+        }
+        if (command === 'codex' && args[0] === '--version') {
           return { reason: 'exited' as const, exitCode: 0 };
         }
         loginRoot = path.dirname(options.env?.CODEX_HOME ?? '');
@@ -663,6 +780,7 @@ describe('structured Codex authentication', () => {
           return { reason: 'exited' as const, exitCode: 0 };
         }
         if (command === 'codex') {
+          if (args[0] === '--version') return { reason: 'exited' as const, exitCode: 0 };
           loginRoot = path.dirname(options.env?.CODEX_HOME ?? '');
           for (const chunk of codexOutput) {
             await options.onOutput?.(chunk, 'stdout', { write() {}, end() {} });
@@ -703,6 +821,10 @@ describe('structured Codex authentication', () => {
       fs.writeFileSync(
         path.join(bin, 'codex'),
         `#!/usr/bin/env bash
+if [ "$1" = "--version" ]; then
+  printf 'codex-cli 0.146.0\\n'
+  exit 0
+fi
 if [ "$1" = "login" ] && [ "$2" = "status" ]; then
   test -s "$CODEX_HOME/auth.json"
   exit $?
