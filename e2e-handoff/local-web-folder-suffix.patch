@@ -1,0 +1,35 @@
+diff --git a/src/channels/local-web-conversations.ts b/src/channels/local-web-conversations.ts
+index 0909108a..2780841f 100644
+--- a/src/channels/local-web-conversations.ts
++++ b/src/channels/local-web-conversations.ts
+@@ -6,7 +6,7 @@ import { getAgentGroupByFolder } from '../db/agent-groups.js';
+ import { getContainerConfig } from '../db/container-configs.js';
+ import { getDb } from '../db/connection.js';
+ import { getPendingApproval, getPendingQuestion, getSession } from '../db/sessions.js';
+-import { assertValidGroupFolder } from '../group-folder.js';
++import { assertValidGroupFolder, groupFolderExistsOnDisk } from '../group-folder.js';
+ import { normalizeName } from '../modules/agent-to-agent/db/agent-destinations.js';
+ import '../providers/index.js';
+ import { listProviderContainerConfigNames } from '../providers/provider-container-registry.js';
+@@ -495,9 +495,18 @@ export async function createLocalWebAgent(request: CreateLocalWebAgentRequest):
+     };
+   }
+ 
+-  const folder = folderForAgentName(request.name);
+-  return withCreationLock(folder, async () => {
+-    const existing = await getAgentGroupByFolder(folder);
++  const baseFolder = folderForAgentName(request.name);
++  return withCreationLock(baseFolder, async () => {
++    // A deleted agent leaves its workspace on disk and groups-create refuses to
++    // claim an unowned folder, so walk the suffixes the way create_agent does: a
++    // folder with an agent group is this name's earlier creation (complete or
++    // partial, resumed below); a folder on disk without one is skipped.
++    let folder = baseFolder;
++    let existing = await getAgentGroupByFolder(folder);
++    for (let suffix = 2; existing === undefined && groupFolderExistsOnDisk(folder); suffix++) {
++      folder = `${baseFolder}-${suffix}`;
++      existing = await getAgentGroupByFolder(folder);
++    }
+     if (existing) {
+       const complete = await conversationByAgent(existing.id);
+       if (complete) return { ok: true, created: false, conversation: complete };

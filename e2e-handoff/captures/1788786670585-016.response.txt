@@ -1,0 +1,9 @@
+event: message_start
+data: {"type":"message_start","message":{"id":"msg_5a8bd4f3558cbfdde80ebc1e","type":"message","role":"assistant","model":"nanoclaw/2b6928c6e0f1:latest","content":[],"usage":{"input_tokens":15515,"output_tokens":0}}}
+
+event: message_delta
+data: {"type":"message_delta","delta":{"stop_reason":"max_tokens"},"usage":{"input_tokens":15515,"output_tokens":8192}}
+
+event: message_stop
+data: {"type":"message_stop"}
+
